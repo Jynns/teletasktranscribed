@@ -1,0 +1,8 @@
+faster-whisper>=1.0.0
+pymupdf>=1.24.0
+numpy>=1.26.0
+pillow>=10.0.0
+matplotlib>=3.8.0
+ipykernel>=6.29.0
+opencv-python>=4.8.0
+pytesseract>=0.3.10

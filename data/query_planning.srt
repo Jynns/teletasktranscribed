@@ -1,0 +1,3028 @@
+1
+00:00:00,000 --> 00:00:03,440
+So welcome back. We're still in the middle of query planning.
+
+2
+00:00:03,440 --> 00:00:08,960
+Last time we looked at global as view and started to look at local as view query planning.
+
+3
+00:00:08,960 --> 00:00:17,200
+So just as a reminder of this slide, right, we are in a way naturally describing data sources
+
+4
+00:00:17,200 --> 00:00:22,800
+towards our global schema in the thinking that the global schema describes the overall
+
+5
+00:00:22,800 --> 00:00:30,480
+universe that we want to model and the data sources have some view of that universe depending on what
+
+6
+00:00:30,480 --> 00:00:36,720
+they chose to store in their data source, right? And this is why we call this local as view and we
+
+7
+00:00:36,720 --> 00:00:42,000
+had looked at a whole bunch of examples such as this example here where we have a bunch of sources
+
+8
+00:00:42,000 --> 00:00:48,560
+and each source or each relation I should say in each source is represented as a view against
+
+9
+00:00:48,560 --> 00:00:56,000
+the global schema. So exactly the other way around as opposed to the global as view modeling. Here we
+
+10
+00:00:56,000 --> 00:01:04,400
+had some, you know, specific aspects when modeling constraints etc. We'll see a whole bunch of examples
+
+11
+00:01:04,400 --> 00:01:12,720
+throughout the lecture, right? So I want to point out today and probably we won't finish today,
+
+12
+00:01:12,720 --> 00:01:18,960
+we'll see how far we get. I wanted to point out the applications of this concept of query answering
+
+13
+00:01:18,960 --> 00:01:23,520
+using views. So this local as view modeling is not just good for data integration but you'll see
+
+14
+00:01:24,160 --> 00:01:28,960
+it's actually a very common problem also in let's say normal database operations and has
+
+15
+00:01:28,960 --> 00:01:33,920
+many different use cases. So it's in a sense an important and let's say obvious questions
+
+16
+00:01:33,920 --> 00:01:38,240
+to solve in many situations, right? And then afterwards we'll look at query processing,
+
+17
+00:01:38,240 --> 00:01:44,560
+containment and I added a whole a bunch of new slides on the bucket algorithm so I just uploaded it
+
+18
+00:01:45,120 --> 00:01:51,440
+I don't know a few minutes ago or so but you can find those slides on Moodle as well, okay?
+
+19
+00:01:52,240 --> 00:01:57,790
+So there are a bunch of applications we're going to do a little bit more detail in each of these,
+
+20
+00:01:57,790 --> 00:02:06,110
+right? So local as view meaning I have views that model something about the global schema
+
+21
+00:02:06,110 --> 00:02:12,270
+and if those views happen to be materialized views then I can use them for query optimization
+
+22
+00:02:12,270 --> 00:02:16,830
+in traditional databases, right? So as a reminder I mean you know what a view is
+
+23
+00:02:16,830 --> 00:02:22,430
+and databases have this concept of a materialized view which stores the result of the view
+
+24
+00:02:22,430 --> 00:02:29,870
+as an actual table materializes it on disk or in main memory so that a database
+
+25
+00:02:29,870 --> 00:02:32,990
+can make use of this materialization in a sense you could think of it as
+
+26
+00:02:33,470 --> 00:02:39,470
+pre-computing part of the query, right? So if I happen to use that view in a query
+
+27
+00:02:39,470 --> 00:02:43,790
+the database system can come along and say oh great I've already materialized that view
+
+28
+00:02:43,790 --> 00:02:50,030
+and I can just use that instead of rejoining and reselecting and re-aggregating whatever, okay?
+
+29
+00:02:50,030 --> 00:02:55,550
+So that's an obvious situation but as we'll see there are other opportunities to use these
+
+30
+00:02:55,550 --> 00:03:01,230
+materialized views even if the query does not use that view. If the query uses the view
+
+31
+00:03:01,230 --> 00:03:05,470
+it's obvious there's a materialization just use it but even if that's not the case
+
+32
+00:03:05,470 --> 00:03:11,470
+we could use these views they are they do represent a pre-computation of some query
+
+33
+00:03:11,470 --> 00:03:17,310
+and maybe it's useful for this other query right here. Then also for data warehouse design we'll
+
+34
+00:03:17,310 --> 00:03:22,670
+talk about that a little bit semantic caching this is also kind of an interesting aspect
+
+35
+00:03:23,230 --> 00:03:31,630
+so if a user issued a query and the query result is cached wherever it is right that's in some sense
+
+36
+00:03:31,630 --> 00:03:36,830
+a materialized view right so you've written a query you have the query result if you remember
+
+37
+00:03:36,830 --> 00:03:42,830
+the query result you could reuse it if it happens to fit future queries this is the
+
+38
+00:03:42,830 --> 00:03:48,270
+whole concept of caching but in this case we call it semantic caching because we are caching
+
+39
+00:03:49,230 --> 00:03:54,750
+by remembering the exact semantics of the thing we're caching right not just the key or something
+
+40
+00:03:54,750 --> 00:04:00,350
+but actually the query itself that produced this data so that we can properly reuse it for the
+
+41
+00:04:00,350 --> 00:04:05,710
+next query and then finally of course our use case data integration where data sources are
+
+42
+00:04:05,710 --> 00:04:14,030
+modeled as views okay so let's have a look at this first application local as view for query
+
+43
+00:04:14,030 --> 00:04:21,310
+optimization so materialized views on a database as you hopefully remember also called materials query
+
+44
+00:04:21,310 --> 00:04:28,400
+tables or advanced summary tables but it's all the same thing it's a view definition that the database
+
+45
+00:04:28,400 --> 00:04:34,240
+administrator usually says please materialize this just as a reminder so the advantage of
+
+46
+00:04:34,240 --> 00:04:40,320
+materializing it is obvious if we use the view we don't need to recompute everything disadvantage
+
+47
+00:04:40,320 --> 00:04:48,350
+maybe quickly from you what are disadvantages of materialized views yeah you need to update them
+
+48
+00:04:48,350 --> 00:04:54,030
+so when the base table changes it might need you might need to update also the materialized
+
+49
+00:04:54,030 --> 00:04:59,230
+view exactly and that can be expensive depending on what the change is sometimes you know that
+
+50
+00:04:59,230 --> 00:05:03,870
+you don't need to do it sometimes you know how to change it but sometimes you have to
+
+51
+00:05:03,870 --> 00:05:10,540
+recompute the whole thing right so that's one disadvantage what is another one yeah storage
+
+52
+00:05:10,540 --> 00:05:16,060
+right it just wastes or takes up space also disadvantage right so it's not obvious to keep
+
+53
+00:05:16,060 --> 00:05:21,900
+everything around as materialized views but some things do make sense right and now the question is
+
+54
+00:05:21,900 --> 00:05:29,180
+which views help to answer database query by you know pre-calculating predicates or by having
+
+55
+00:05:29,180 --> 00:05:35,500
+a materialized view ready right so here you have this you know tiny situation you have a
+
+56
+00:05:35,500 --> 00:05:41,580
+database you have five relations and you have an optimizer that would like to make use of materialized
+
+57
+00:05:42,140 --> 00:05:49,740
+views right so here I just have some tiny view examples right materialized view one is just
+
+58
+00:05:49,740 --> 00:05:56,940
+r1 but with a pre-selection a equals 10 right so it's a subset of r1 materialized view two is
+
+59
+00:05:56,940 --> 00:06:03,580
+simply the join between r1 and r2 materialized view three is the right outer join of r2 and
+
+60
+00:06:03,580 --> 00:06:09,340
+r3 and materialized view four is the union of r4 and r5 just for the fun of it these are just some
+
+61
+00:06:09,340 --> 00:06:15,380
+tiny examples okay so far so good these are just you know materialized views okay fine now along
+
+62
+00:06:15,380 --> 00:06:22,020
+comes a query and we could wonder which materialized views could we use so this query I you know is
+
+63
+00:06:22,020 --> 00:06:26,820
+select star from r1 that's the query I put it really short they're just saying r1 right I want
+
+64
+00:06:26,820 --> 00:06:35,810
+all of r1 okay so which views help to answer that query so I could just go to r1 clearly but is
+
+65
+00:06:35,810 --> 00:06:49,860
+their materialized view that would help us yeah go ahead right so in principle you could use
+
+66
+00:06:49,860 --> 00:06:55,300
+materialized view one just repeating it for the camera right but then you only get a subset
+
+67
+00:06:55,300 --> 00:07:00,420
+and then you kind of have to go to r1 anyway to get the rest but it's possible absolutely so
+
+68
+00:07:00,420 --> 00:07:06,980
+it's possible is it useful probably not in this situation right but there you go right what about
+
+69
+00:07:06,980 --> 00:07:17,540
+materialized view two can you use that there's always a correct one correct answer to all my
+
+70
+00:07:17,540 --> 00:07:23,300
+queries all my questions yes okay exactly but of course there's a follow-up question on what
+
+71
+00:07:28,220 --> 00:07:43,120
+no I was talking about materialized view two so there's no r3 involved well if when I say the
+
+72
+00:07:43,120 --> 00:07:49,280
+join I'm assuming all attributes are exported right so so this is a join of r1 and r2 with no
+
+73
+00:07:49,280 --> 00:08:00,380
+extra projections right it's just all of r1 all of r2 yes yeah so it is an inner join right but
+
+74
+00:08:00,380 --> 00:08:04,940
+that's because I don't have any anything else there so we only have a subset of r1 is what you
+
+75
+00:08:04,940 --> 00:08:13,700
+said yeah which subset which subset right those that have that find a join partner
+
+76
+00:08:13,700 --> 00:08:18,420
+and but if for instance we know that it's a join over a key foreign key relationship
+
+77
+00:08:18,420 --> 00:08:23,060
+and the foreign key happens to be in r1 then I know there has to be a joint partner because
+
+78
+00:08:23,060 --> 00:08:29,380
+it's a foreign key so in those cases I could even be sure that all of r1 is actually also hidden in
+
+79
+00:08:29,380 --> 00:08:34,140
+materialized view two yeah there's no you know there's these are things you could be doing
+
+80
+00:08:34,140 --> 00:08:40,540
+let's let's look at a separate one this one is easy right I'm looking for r1 but where a equals 10
+
+81
+00:08:40,540 --> 00:08:47,410
+okay this is obvious I can just use materialized view one what about r3 again I think I can
+
+82
+00:08:47,410 --> 00:08:52,610
+explain this this is the right outer join so this in particular says all the attributes of r3
+
+83
+00:08:53,250 --> 00:08:59,650
+all the tuples of r3 are retained right even if they don't find a joint partner so in principle
+
+84
+00:08:59,650 --> 00:09:07,600
+I could use a materialized view three to answer this query principle right should I any thoughts
+
+85
+00:09:07,600 --> 00:09:22,880
+here yeah yeah probably yeah exactly so so this this can only be bigger than r3 right it has
+
+86
+00:09:22,880 --> 00:09:30,560
+all of r3 plus all the joint partners so probably not useful right this one here again is an easy case
+
+87
+00:09:30,560 --> 00:09:35,520
+right I'm I want to join r1 and r2 this is precisely materialized view two so I can just use that
+
+88
+00:09:35,520 --> 00:09:43,200
+materialized view right what about r4 I mean you get the picture right so I could use materialized
+
+89
+00:09:43,200 --> 00:09:50,400
+view four but I get extra tuples so I could just as well go to r4 what about this one here
+
+90
+00:09:51,120 --> 00:10:09,860
+r1 join r2 join r3 which views would help answer this question yeah view two and view three these two
+
+91
+00:10:09,860 --> 00:10:15,460
+together okay so I could join those two basically right that would be that would would correspond
+
+92
+00:10:15,460 --> 00:10:21,220
+to what we're doing right there's other plans you could just use just view two and then join
+
+93
+00:10:21,220 --> 00:10:27,380
+it directly with r3 for instance right then that would also be a possibility right exactly
+
+94
+00:10:27,380 --> 00:10:34,990
+so just to so okay so it's not always better to use a materialized view obviously right sometimes
+
+95
+00:10:34,990 --> 00:10:39,470
+it's useful just to go to the base relation for instance if they if they have some nice indices
+
+96
+00:10:40,270 --> 00:10:45,230
+and then the updates of materialized views is expensive as we said and then we have other
+
+97
+00:10:45,230 --> 00:10:51,630
+questions can I write into a materialized view can I can I say you know update this
+
+98
+00:10:51,870 --> 00:10:57,870
+this materialized view this is an interesting question and what happens if I write if I change the
+
+99
+00:10:57,870 --> 00:11:07,730
+base relation I have to update also the materialized views of it right so now the analogy to uh to
+
+100
+00:11:07,730 --> 00:11:14,610
+data integration is simply the following right the analogy is simply I do not have this part
+
+101
+00:11:14,610 --> 00:11:19,920
+of the database right so those are the sources but I only have access to the sources through
+
+102
+00:11:19,920 --> 00:11:25,600
+the views right this is exactly our situation in data integration so then suddenly the questions
+
+103
+00:11:25,600 --> 00:11:31,170
+that I have up there are not is it useful or not should I go to the base relation or not
+
+104
+00:11:31,170 --> 00:11:35,330
+I only have these views that's how my data sources are modeled right and then I could
+
+105
+00:11:35,330 --> 00:11:41,330
+answer these questions and or then I could wonder which of these queries I can properly
+
+106
+00:11:41,330 --> 00:11:47,410
+answer only using these views right but the the kind of problem we're talking about is the same
+
+107
+00:11:47,410 --> 00:11:52,770
+databases have the additional advantage that they can go to the base relation just in case right
+
+108
+00:11:52,770 --> 00:11:59,010
+but we don't have that luxury right because the base relations do not contain any data they are
+
+109
+00:11:59,810 --> 00:12:05,820
+something fictional in the global schema and only the views contain that data and so some
+
+110
+00:12:05,820 --> 00:12:10,860
+queries we can answer some we can answer only partially some answers we might be able to answer
+
+111
+00:12:10,860 --> 00:12:20,000
+completely etc etc okay so another use case of this concept of answering queries using views
+
+112
+00:12:20,720 --> 00:12:29,200
+is uh is data warehouse design right so given a query workload right so a set of queries
+
+113
+00:12:29,200 --> 00:12:34,960
+and how often they they appear the question is which views should I materialize to answer
+
+114
+00:12:34,960 --> 00:12:39,760
+that set of questions right I have lots of analytical questions with many joins and
+
+115
+00:12:39,760 --> 00:12:48,240
+selections etc right can I design a nice small set of materialized views that would be especially
+
+116
+00:12:48,240 --> 00:12:53,760
+helpful for that query workload right I could just say none and then I always have to go to the base
+
+117
+00:12:53,760 --> 00:12:59,840
+relations of the data warehouse but if I know my workload I could design a few materialized
+
+118
+00:12:59,840 --> 00:13:05,360
+views that would be especially helpful and then I know that when queries come along I can then
+
+119
+00:13:05,360 --> 00:13:12,610
+answer them using maybe only those materialized views or parts of those materialized views and
+
+120
+00:13:12,610 --> 00:13:18,210
+then parts of the base relations right so the the question is is the same as before once you've
+
+121
+00:13:18,210 --> 00:13:23,410
+materialized them but here we're asking which ones should I actually materialize to be especially
+
+122
+00:13:23,410 --> 00:13:34,740
+useful and this is a tradeoff between runtime and space and and and updates etc okay so here's
+
+123
+00:13:34,740 --> 00:13:39,780
+you know why is this problem actually quite simple I mean there's one trivial answer to this
+
+124
+00:13:43,570 --> 00:13:50,750
+it's not this is not a good answer but how could you trivially answer this this problem or address
+
+125
+00:13:50,750 --> 00:14:08,830
+this problem exactly just every just say every query we define as a materialized view because I
+
+126
+00:14:08,830 --> 00:14:12,590
+know them in advance I know the workload in advance I'll just say that's a view that's a
+
+127
+00:14:12,590 --> 00:14:15,470
+view that's a view and I'm going to materialize everything so every time that query comes
+
+128
+00:14:15,470 --> 00:14:21,820
+along I have the answer right away of course this is now ignoring space and time complexity
+
+129
+00:14:21,820 --> 00:14:26,780
+but that would be one way of solving this problem the other way of solving this problem is just say
+
+130
+00:14:26,780 --> 00:14:32,110
+no materialized views because I always have the opportunity to go to the base relations okay
+
+131
+00:14:34,500 --> 00:14:39,940
+so the next one semantic caching this is important in distributed databases where it's
+
+132
+00:14:39,940 --> 00:14:47,460
+especially expensive to fetch data and where you know you one one node answers ask a question you
+
+133
+00:14:47,460 --> 00:14:52,740
+have to fetch the data from all over the place so it might make a lot of sense to do some caching
+
+134
+00:14:53,860 --> 00:14:58,500
+at your client side or at the node where you are answering the question in your big
+
+135
+00:14:58,500 --> 00:15:05,860
+distributed system right so these materialized data stem from let's say complex queries they
+
+136
+00:15:05,940 --> 00:15:15,260
+are the result of a query and then you just decide to cache it okay now along comes the next query
+
+137
+00:15:15,900 --> 00:15:23,020
+at the same node and now you have to ask yourself can I use any of the cache right so normally when
+
+138
+00:15:23,020 --> 00:15:30,300
+you use caches if you think about it you might cache images or web pages or so that kind of
+
+139
+00:15:30,300 --> 00:15:35,580
+caching is easy because you just remember the id of the image that you've cached and if you
+
+140
+00:15:35,580 --> 00:15:40,940
+want to fetch that again you just check against your cache maybe a hash table and then just show it
+
+141
+00:15:40,940 --> 00:15:47,180
+show the table out of your cache okay you could do the same for queries right so if the same
+
+142
+00:15:47,180 --> 00:15:52,380
+query comes along you say oh that's the same query as 10 minutes ago I've cached that result
+
+143
+00:15:52,380 --> 00:15:57,100
+I'll just show that result again that's fine right but in all likelihood the query will
+
+144
+00:15:57,100 --> 00:16:02,620
+be a little bit different it will have one more join or a selection or a different projection
+
+145
+00:16:02,700 --> 00:16:07,660
+might just be different and now the question is instead of going all the way back to my distributed
+
+146
+00:16:07,660 --> 00:16:13,740
+system maybe I can use at least parts of what I've cached to answer this query maybe what I'm asking
+
+147
+00:16:13,740 --> 00:16:23,420
+is a subset of my query results right or maybe it's a superset and I have to and I have to
+
+148
+00:16:24,220 --> 00:16:29,980
+you know do some extra filtering right so this so here this question what new data do I have to
+
+149
+00:16:29,980 --> 00:16:36,860
+query a fresh from remote which old or cached data can I use and again answering this question is
+
+150
+00:16:36,860 --> 00:16:41,020
+answering queries using views you have a query you have a bunch of views that will be convenient
+
+151
+00:16:41,020 --> 00:16:48,350
+to use because they're cached but in this case as in the database case just in case you'll always
+
+152
+00:16:48,350 --> 00:16:53,470
+have access to the base relations it's just more expensive right so it's kind of still an
+
+153
+00:16:53,470 --> 00:16:59,790
+optimization problem right and of course here also you could ask the question if you do
+
+154
+00:16:59,790 --> 00:17:07,310
+really good semantic caching you could also let's say predict which query I should be caching or maybe
+
+155
+00:17:07,310 --> 00:17:12,590
+which parts of the query I should be caching yeah maybe I could say okay here's a big complex query
+
+156
+00:17:12,590 --> 00:17:16,670
+these are the query this is the query result I'm not going to cache all of it I'm going to
+
+157
+00:17:16,670 --> 00:17:21,550
+cache only a few of those attributes or a few of those tuples or so you know you can make
+
+158
+00:17:21,550 --> 00:17:29,340
+let's say informed decisions there if you kind of know the workload okay good and then the
+
+159
+00:17:29,340 --> 00:17:35,660
+final application is the one that we're most interested in is data integration right so again
+
+160
+00:17:35,660 --> 00:17:41,180
+data sources are views against the global schema and then the whole point here is how can I answer
+
+161
+00:17:41,180 --> 00:17:46,780
+query to the global schema using only the views right because in this case I only have views
+
+162
+00:17:46,780 --> 00:17:53,020
+available there are no base relations right if I go back to the to the image we had earlier
+
+163
+00:17:54,160 --> 00:18:00,640
+right so these queries here are queries against these base relations in my global schema right
+
+164
+00:18:00,640 --> 00:18:06,480
+but in a data integration situation I do not have those base relations I have only the schema
+
+165
+00:18:07,120 --> 00:18:13,920
+but I do have these views so the question is can I answer this query only using these views
+
+166
+00:18:13,920 --> 00:18:20,800
+right so no base tables are available I can only use the views and thus my expectation
+
+167
+00:18:20,800 --> 00:18:28,400
+is always usually I probably can't answer the query completely right I only have those views
+
+168
+00:18:28,400 --> 00:18:34,560
+the views are only part of my global universe right my query is against all movies that have
+
+169
+00:18:34,560 --> 00:18:39,920
+ever been made right but I have a few data sources that have some of those movies so of course
+
+170
+00:18:39,920 --> 00:18:45,440
+I'm not going to be able to answer it completely because completely would mean this you know
+
+171
+00:18:45,440 --> 00:18:51,090
+fictitious table that has all the movies in the world because that's how I modeled my universe
+
+172
+00:18:51,090 --> 00:18:55,970
+right but of course this table is net not stored anywhere and I can only fill it with
+
+173
+00:18:55,970 --> 00:19:01,010
+views from here and there and hope for the best in a sense right so the question I have to answer
+
+174
+00:19:01,010 --> 00:19:06,610
+is can I use answer it only using views and can I answer it completely right those are the
+
+175
+00:19:06,610 --> 00:19:11,420
+two big questions that we're asking ourselves okay so I hope I've convinced you that this
+
+176
+00:19:11,420 --> 00:19:15,820
+concept of query answering using views is really not just a data integration question
+
+177
+00:19:15,820 --> 00:19:22,140
+but something that databases should be tackling all the time right the bad news is this is a very
+
+178
+00:19:22,140 --> 00:19:31,490
+difficult problem right the decision can I use a query is very difficult to make at least theoretically
+
+179
+00:19:31,490 --> 00:19:38,290
+it's an NP complete problem right just the question is this is the answer to this query a
+
+180
+00:19:38,290 --> 00:19:42,290
+subset of something I'm looking for that question alone is already a difficult question
+
+181
+00:19:42,290 --> 00:19:48,130
+because queries can be quite complex right but in reality the queries are not that complex right so
+
+182
+00:19:48,130 --> 00:19:54,770
+even if we have let's say an exponential algorithm in the number of relations involved you know maybe
+
+183
+00:19:54,770 --> 00:20:00,290
+there are five relations involved or so then you know then it's manageable okay so that's
+
+184
+00:20:00,290 --> 00:20:05,810
+this is the bad news but the good news is algorithms do exist and it is possible so it's
+
+185
+00:20:05,810 --> 00:20:13,580
+not a hopeless cause okay good so let's see what is the problem we're trying to solve here in data
+
+186
+00:20:13,580 --> 00:20:18,860
+integration so we have a query queue against the global schema and we have a bunch of local schema
+
+187
+00:20:18,860 --> 00:20:26,580
+term or views right we have a sequence we want to find a sequence of queries so these are what
+
+188
+00:20:26,580 --> 00:20:32,100
+we earlier called subqueries each of those subqueries can be executed by a wrapper this
+
+189
+00:20:32,100 --> 00:20:38,740
+is something I can directly send to a wrapper okay and what I'm also looking for is the correct
+
+190
+00:20:38,740 --> 00:20:45,300
+linking oops so basically I have to decide which things do I join which things do I union right
+
+191
+00:20:45,300 --> 00:20:50,580
+so in the end I have a query plan and I said earlier a typical shape of a query plan is
+
+192
+00:20:51,300 --> 00:20:55,060
+a disjunction of conjunction so I have a bunch of conjunctions join this this this this
+
+193
+00:20:56,050 --> 00:21:00,850
+and also join this this this and this and then union the results and then you'll
+
+194
+00:21:01,410 --> 00:21:06,930
+you know find a global answer to this query right and so if you break it down even more you're
+
+195
+00:21:06,930 --> 00:21:11,410
+basically saying I have a bunch of queries that I'm going to send to the sources and I'll
+
+196
+00:21:11,410 --> 00:21:15,730
+collect the results and then join and union them appropriately in a sense right that's kind of
+
+197
+00:21:15,730 --> 00:21:22,050
+what I'm saying okay so within one plan you're going to be doing joins and then across
+
+198
+00:21:22,050 --> 00:21:29,250
+such plans you're going to union the results of those of those joins right all the tuples determined
+
+199
+00:21:29,250 --> 00:21:39,420
+by such a subplan or by such a plan are correct answers right and if you create all valid subplans
+
+200
+00:21:40,860 --> 00:21:45,180
+then you will have answered the query completely or at least as completely as possible
+
+201
+00:21:45,180 --> 00:22:01,220
+with respect to the data sources that you have questions yeah go ahead yeah yeah I'm I
+
+202
+00:22:01,220 --> 00:22:08,500
+as I was speaking I was I was maybe doing it a little bit more in a complicated
+
+203
+00:22:09,220 --> 00:22:18,290
+or saying it more complicated than it needs to be I'll say something that I hope is is correct
+
+204
+00:22:18,290 --> 00:22:23,410
+also for the following slides right but at least hoping so we have two things at three levels
+
+205
+00:22:23,410 --> 00:22:29,490
+right so we have what we call queries here these are queries against the sources a query
+
+206
+00:22:29,570 --> 00:22:44,400
+okay these queries are put together well yeah let me go okay so we have called these subqueries also
+
+207
+00:22:44,400 --> 00:22:50,640
+right or subplans right actually maybe I'll I'll as you're saying this I'll I'll make a
+
+208
+00:22:50,640 --> 00:22:57,440
+slide or something so these are subplans right then if I join stuff together this is then
+
+209
+00:22:57,440 --> 00:23:06,380
+a plan right this is also what I say here and then the union of plans is my query results we don't
+
+210
+00:23:06,380 --> 00:23:12,620
+need to call that anything okay so I think it's more important so I hope the nomenclature works for
+
+211
+00:23:12,620 --> 00:23:16,860
+the next slide I don't know it this by heart I think it should but it's important to understand
+
+212
+00:23:16,860 --> 00:23:21,820
+the different levels we're talking about right these individual queries are usually
+
+213
+00:23:21,820 --> 00:23:27,340
+queries against one table right they will be queries against a view right we're asking this
+
+214
+00:23:27,340 --> 00:23:35,500
+particular view give me all your data where a equals 10 or stuff like that right even if even if
+
+215
+00:23:36,460 --> 00:23:42,780
+a data a particular data source has multiple relations and offers multiple views we will
+
+216
+00:23:42,780 --> 00:23:50,460
+usually treat them as separate views so and we can right so so you could imagine a data source
+
+217
+00:23:50,460 --> 00:23:57,260
+that offers well as I said multiple views so in theory if you join those two views that could
+
+218
+00:23:57,260 --> 00:24:02,780
+be done internally in the in the data source right right now we're kind of ignoring that
+
+219
+00:24:02,780 --> 00:24:07,340
+factor is just saying give me some data from this view give me some data from this view and
+
+220
+00:24:07,340 --> 00:24:12,940
+I will join it together and maybe the wrapper or the optimizer will realize actually that
+
+221
+00:24:12,940 --> 00:24:19,020
+join could also be done in this source right but in principle we'll just say data from this
+
+222
+00:24:19,020 --> 00:24:24,860
+view data from this view data from this view join it all together that will produce a subset
+
+223
+00:24:24,860 --> 00:24:32,940
+of my query result right and I do that with as many plans as I can find each of them producing
+
+224
+00:24:32,940 --> 00:24:48,720
+a subset of the result and then I union them together to have my overall result okay good
+
+225
+00:24:48,720 --> 00:24:54,320
+good question right I'm prepared for it right but I hope this is kind of this is exactly
+
+226
+00:24:54,400 --> 00:24:59,280
+what I said right this is a query plan these are all the joins and then and then as I said
+
+227
+00:24:59,280 --> 00:25:05,040
+at a global level you will be uniting results of those right so these are just some you know given
+
+228
+00:25:05,040 --> 00:25:12,320
+a global query queue a query plan p for q is a query of this form such that each of the individual
+
+229
+00:25:13,730 --> 00:25:17,650
+subplans what I said on the previous slide can be executed by one wrapper
+
+230
+00:25:17,650 --> 00:25:22,930
+so these are things I can send to the source right and each tuple produced by the plan
+
+231
+00:25:22,930 --> 00:25:28,050
+is is a correct answer right that's what we're what we're looking for right we have yet not
+
+232
+00:25:28,050 --> 00:25:32,530
+not yet defined semantically correct we'll do that in a second and we'll define containment
+
+233
+00:25:33,330 --> 00:25:38,290
+usually there are many such query plans and we want to union them right and here the q1s are
+
+234
+00:25:38,290 --> 00:25:45,630
+subqueries or subplans so I guess this should work out also in the future good
+
+235
+00:25:46,590 --> 00:25:54,160
+okay so now we're talking about what is semantically correct by introducing the concept of query
+
+236
+00:25:54,160 --> 00:26:00,000
+containment so now suddenly earlier I was saying we produced some tuples and they are a subset of
+
+237
+00:26:00,000 --> 00:26:06,240
+my query results and I can execute them we can actually talk about these relationships at query
+
+238
+00:26:06,240 --> 00:26:12,080
+level right so what do we want we want a view that returns only semantically correct queries
+
+239
+00:26:12,080 --> 00:26:19,200
+to a global query if its extension is included in the result of q so if its data is in the result of
+
+240
+00:26:19,200 --> 00:26:25,680
+q right so we'll introduce containment so we have a database schema an instance and two queries
+
+241
+00:26:27,340 --> 00:26:35,180
+q1 q of i is the result of the query on that instance and then we say one query is contained in
+
+242
+00:26:36,140 --> 00:26:45,660
+the other query if it is true that its result is a subset of the result of the other query
+
+243
+00:26:45,660 --> 00:26:54,050
+for any instance i okay so this concept of for any instance i that's the important part
+
+244
+00:26:54,050 --> 00:27:00,430
+so we are arguing at query level we have the same situation when we talk about
+
+245
+00:27:00,510 --> 00:27:08,670
+query plan equivalence in the database course so we say we have a query plan we optimize the query
+
+246
+00:27:08,670 --> 00:27:15,870
+plan so we change it a little bit but it's semantically equivalent meaning no matter which database I
+
+247
+00:27:15,870 --> 00:27:21,390
+execute the old plan and the transform plan I will always get the same result it's guaranteed I
+
+248
+00:27:21,390 --> 00:27:26,670
+don't need to look at the data I know just from the query plan that this is true and this
+
+249
+00:27:26,670 --> 00:27:30,830
+is also what we're defining here we're just not defining equivalence we're defining containment
+
+250
+00:27:30,830 --> 00:27:38,590
+we're saying here's a query and and here's another query and we say this query is contained in this one
+
+251
+00:27:38,590 --> 00:27:43,790
+if no matter what the data looks like the results of this query will be contained in the results
+
+252
+00:27:43,790 --> 00:27:53,170
+of this query okay this is the idea and we cannot try all possible instances right we can't try
+
+253
+00:27:53,170 --> 00:27:58,290
+for any instance so we need to be able to prove that this is true regardless of what the database
+
+254
+00:27:58,370 --> 00:28:03,810
+instance is and now just to get back to our our overall data integration problem
+
+255
+00:28:05,380 --> 00:28:14,880
+what are these two queries we're talking about what is q1 what is q2 so this is a statement about
+
+256
+00:28:14,880 --> 00:28:21,440
+queries in general think sequel queries right but but but in our scenario what is q1 which
+
+257
+00:28:21,440 --> 00:28:36,260
+role does q1 play which role does q2 play so where are we looking for containment yeah go ahead
+
+258
+00:28:43,790 --> 00:28:48,750
+well if we had containment there then I mean that would be interesting for sure right we could say
+
+259
+00:28:48,750 --> 00:28:54,030
+q1 is against one source q2 is against another source and there's a containment so I don't even
+
+260
+00:28:54,030 --> 00:29:00,350
+need to execute q1 because its result will always be contained in if I execute q2 right that that
+
+261
+00:29:00,350 --> 00:29:06,910
+would be a you know something that I could optimize for right so in principle sure but
+
+262
+00:29:06,910 --> 00:29:14,610
+that's not really what we're looking for here so I talked about containment a few slides earlier
+
+263
+00:29:14,610 --> 00:29:21,170
+already right I think this was in this slide here right the data integration
+
+264
+00:29:23,140 --> 00:29:29,470
+no well it doesn't matter anyway so let's let's just stick here yeah yeah another answer go ahead
+
+265
+00:29:30,270 --> 00:29:56,690
+yes not quite so I mean I mean all of this is kind of interesting and useful to know right
+
+266
+00:29:56,770 --> 00:30:05,090
+but what we're really looking for is the following right so q2 is the user query right so this is the
+
+267
+00:30:05,090 --> 00:30:17,470
+query that the user had against the global schema and q1 is my query plan okay and now I want to be
+
+268
+00:30:17,470 --> 00:30:23,950
+sure that if I execute this query plan my results will be contained in what the user had in mind
+
+269
+00:30:24,940 --> 00:30:30,140
+this is what we're looking for right so so this is what I also said earlier we might have many such
+
+270
+00:30:30,140 --> 00:30:36,270
+plans in each plan contributes a little bit to the user query okay and now what is might be confusing
+
+271
+00:30:37,230 --> 00:30:43,150
+is I'm using the word query and plan completely interchangeably but it doesn't matter right this
+
+272
+00:30:43,150 --> 00:30:48,670
+is it's all queries right and we're assuming you know if I write down a query as a set of
+
+273
+00:30:48,750 --> 00:30:58,910
+joins it's a plan right it doesn't really matter what it is so so the q2 is what the user asked q1 is one
+
+274
+00:30:58,910 --> 00:31:05,950
+plan you know joining a few views together and and then I'd like to be able to show the this query
+
+275
+00:31:05,950 --> 00:31:12,110
+or this plan is contained in this query or in this plan plan and query are all the same it's
+
+276
+00:31:12,190 --> 00:31:20,020
+just a bunch of joins among relations okay the interesting thing of course is the following
+
+277
+00:31:20,020 --> 00:31:27,700
+q2 is a query against the global schema q1 is a query that uses the views of the wrappers
+
+278
+00:31:28,450 --> 00:31:34,450
+right so they are against different schemata actually it's worth worthwhile to write it down
+
+279
+00:31:42,500 --> 00:31:48,110
+so let's see I haven't prepared this in my head but let's see what happens right
+
+280
+00:31:48,110 --> 00:31:54,110
+so this is my global schema two relations for key whatever right I have my query
+
+281
+00:31:55,150 --> 00:32:07,870
+q1 by the user against this schema right I have my query two my plan which is a query
+
+282
+00:32:07,870 --> 00:32:17,300
+that uses materialized views yeah maybe it also maybe it joins three materialized views right
+
+283
+00:32:17,300 --> 00:32:26,420
+it's a plan that I came up with I said if I join these then my then the result will be a result
+
+284
+00:32:26,420 --> 00:32:30,980
+against the query that joins these two tables whatever right so I want to be able to say
+
+285
+00:32:31,700 --> 00:32:36,740
+there's this containment relationship and now of course it's really weird to be able to talk
+
+286
+00:32:36,740 --> 00:32:42,900
+about a query containment this is a query against one schema this is a query that is
+
+287
+00:32:42,900 --> 00:32:49,140
+against a completely different schema right these are here are relations this is I don't know the
+
+288
+00:32:49,140 --> 00:32:56,900
+customers and the orders right and this is stuff like source one and this is source two and this is
+
+289
+00:32:56,900 --> 00:33:02,930
+source three right this is a different schema how on earth are we going to be able to prove
+
+290
+00:33:02,930 --> 00:33:07,650
+containment here right from the looks of it they are completely different they have nothing
+
+291
+00:33:07,650 --> 00:33:11,650
+with it you know this is just one sequel query if you will and another sequel query against
+
+292
+00:33:11,650 --> 00:33:24,060
+completely different relations how are we going to resolve this problem is a question to you to all
+
+293
+00:33:24,060 --> 00:33:40,610
+of you but yes yes exactly so I'm yes that is that is certainly that's a correct answer right but but
+
+294
+00:33:40,610 --> 00:33:46,130
+it's even more obvious here so these materialized views or these why did I say materialized views
+
+295
+00:33:46,130 --> 00:33:50,620
+they are just views there's nothing there doesn't have to be I was back in the day these are
+
+296
+00:33:50,620 --> 00:33:54,460
+just the views they are local as you use right they don't have to be materialized I mean usually
+
+297
+00:33:54,460 --> 00:34:03,600
+they're not right so these are views right so I have created these views using the schema mapping
+
+298
+00:34:03,600 --> 00:34:09,440
+right so the schema mapping and matching I have done to create views yeah to create the views right
+
+299
+00:34:11,340 --> 00:34:17,500
+this was right if you remember I had let me draw it this way right and I had a global
+
+300
+00:34:17,500 --> 00:34:25,100
+schema here and then I said you know map all these guys here right and and and I don't know maybe
+
+301
+00:34:25,100 --> 00:34:30,460
+something like that right and now this is a query here like this implied a query we looked at that
+
+302
+00:34:30,460 --> 00:34:38,260
+and and said okay this is a query okay this is a this is a query and these kind of queries
+
+303
+00:34:38,260 --> 00:34:45,070
+are exactly the views here okay so so schema mapping helps but now I want to talk about
+
+304
+00:34:45,150 --> 00:34:52,510
+equivalence or containment between these guys and the trick is actually very simple is I mean
+
+305
+00:34:53,730 --> 00:34:57,650
+it's not even a trick it's just the insight is these are views right these are views
+
+306
+00:34:59,010 --> 00:35:07,730
+but these views have view definitions right so this view is something like a select star from
+
+307
+00:35:08,530 --> 00:35:15,740
+because it's a view customers that's the view definition is this here right the view might
+
+308
+00:35:15,740 --> 00:35:24,210
+be called as one but the view definition is a select star from something in the global schema
+
+309
+00:35:24,210 --> 00:35:31,170
+right this view might be I don't know so it's you know just as a to make it explicit this could be
+
+310
+00:35:31,730 --> 00:35:44,960
+create view s3 from no select sorry select I don't know let's just say star from and I
+
+311
+00:35:44,960 --> 00:35:52,750
+could say maybe customer comma order where I don't know and then there's a joint condition here
+
+312
+00:35:52,750 --> 00:36:00,670
+right so these views are views against the global schema so if I expand these views with their
+
+313
+00:36:00,670 --> 00:36:07,740
+definition basically I have something again that addresses the global schema so now I'm
+
+314
+00:36:07,740 --> 00:36:14,910
+asking the question is this query against customers and orders contained in this query
+
+315
+00:36:14,910 --> 00:36:20,820
+against customers and orders and that's something I can easily answer because those are both
+
+316
+00:36:20,820 --> 00:36:27,310
+queries against the same thing so the whole trick here is that we are modeling the sources
+
+317
+00:36:27,310 --> 00:36:34,100
+as views against the global schema the query is also a query against the global schema and so we
+
+318
+00:36:34,100 --> 00:36:42,540
+can compare them and we can try to build good query plans such that this relationship holds
+
+319
+00:36:42,540 --> 00:36:49,340
+this whole trick and now the difficulty is how do I put these views together such that a contained
+
+320
+00:36:49,340 --> 00:36:57,020
+query plan is generated or is there and how do I generate all of them so that I get a complete
+
+321
+00:36:57,100 --> 00:37:05,710
+answer here okay good so we're going through that anyway in the next a few slides
+
+322
+00:37:08,510 --> 00:37:14,110
+so semantically correctness right we use we use it to to define when a plan is semantically correct
+
+323
+00:37:14,110 --> 00:37:20,510
+when it is contained right so I have a global schema I have a query I have a plan that links
+
+324
+00:37:20,510 --> 00:37:26,990
+all these views these views are against the global schema these views are views against
+
+325
+00:37:26,990 --> 00:37:34,670
+the global schema and then we call p semantically correct for the query if that plan is contained
+
+326
+00:37:34,670 --> 00:37:38,750
+in the original query right this is the same slide as before but now I'm not talking about
+
+327
+00:37:38,750 --> 00:37:43,310
+queries in general I'm talking about the date integration scenario where we have a plan in a
+
+328
+00:37:43,310 --> 00:37:48,610
+query but again keep in mind plan and query is all the same thing right there's no just a
+
+329
+00:37:48,610 --> 00:37:53,420
+bunch of relations that I'm joining together you know so the extension of p is contained in
+
+330
+00:37:53,420 --> 00:37:59,980
+that of q the extension of q doesn't really exist extension of q doesn't exist it's only conceptual
+
+331
+00:37:59,980 --> 00:38:06,460
+right it's the global schema we don't have any data there but conceptually we can of course say that
+
+332
+00:38:06,460 --> 00:38:15,180
+anything that you know is responded to from this query plan is or should be contained in the global
+
+333
+00:38:15,820 --> 00:38:27,390
+query okay and then just to reiterate we might have many such plans each one produce each one being
+
+334
+00:38:27,390 --> 00:38:34,270
+contained and then the result of the query is just the union of all those results right and
+
+335
+00:38:35,230 --> 00:38:41,310
+of course in some sense this should be as I say here the set-based union as all unions are right
+
+336
+00:38:42,030 --> 00:38:47,390
+because I do expect duplicates right because I'm going to be reusing the same views in many
+
+337
+00:38:47,390 --> 00:38:51,550
+different situations I'm going to be joining this view with this view this view with that view
+
+338
+00:38:51,550 --> 00:38:55,790
+so they're bound to be duplicates right I'm integrating data from many different sources
+
+339
+00:38:55,790 --> 00:39:02,830
+they might contain the same information and so it has to be a union right or even better if I'm
+
+340
+00:39:02,830 --> 00:39:08,990
+really fancy this is not really a union here this is a duplicate detection algorithm that
+
+341
+00:39:08,990 --> 00:39:14,270
+takes all the results detects the duplicates within the results and merges them into one nice
+
+342
+00:39:14,270 --> 00:39:20,190
+big clean result right but let's say if we're in the strict relational algebra we just say okay
+
+343
+00:39:20,190 --> 00:39:33,810
+we're going to just do a union right okay so far so good oh no okay so now we're we have everything
+
+344
+00:39:33,810 --> 00:39:40,770
+prepared to you know address this problem of answering queries using views this is the
+
+345
+00:39:40,770 --> 00:39:45,810
+name of the problem we're trying to solve right so the idea is we want to rewrite the
+
+346
+00:39:45,810 --> 00:39:50,530
+query against the global schema by incorporating views we want to replace everything that looks like
+
+347
+00:39:50,530 --> 00:39:56,050
+a relation from the global schema and we're only allowed to use the views right we need to as I
+
+348
+00:39:56,050 --> 00:40:01,410
+say here cleverly combine the individual views into a query so that the result is contained
+
+349
+00:40:01,410 --> 00:40:06,850
+and then overall just do the union right and all the difficulty lies in this word here right
+
+350
+00:40:07,970 --> 00:40:16,500
+I mean cleverly cleverly and correctly I should also say okay so the next few slides
+
+351
+00:40:16,500 --> 00:40:24,670
+we're going to go through some examples just to see how this looks okay so this is an example I took
+
+352
+00:40:24,670 --> 00:40:33,630
+from one of the seminal papers about this problem by Alon Halibi so I just you know stole his example
+
+353
+00:40:33,630 --> 00:40:38,670
+and I think this example has been translated and translated back so it might not be identical
+
+354
+00:40:38,670 --> 00:40:42,670
+to the one in the paper because I've given this lecture in German and now I'm giving it
+
+355
+00:40:42,750 --> 00:40:47,310
+in English again I think I translated each direction but anyway here we go right so I
+
+356
+00:40:47,310 --> 00:40:51,470
+think this is clear we have a teacher's and a course the teacher's is about professors
+
+357
+00:40:51,470 --> 00:40:58,510
+who teach a course in a specific semester they have an evaluation ID at a university
+
+358
+00:40:58,510 --> 00:41:07,310
+and the courses have a title and are also given at a certain university right so this is a data
+
+359
+00:41:07,310 --> 00:41:16,030
+source yeah which contains all database courses in Germany or whatever okay so it's a view the view
+
+360
+00:41:16,030 --> 00:41:22,830
+is called DB course so in some sense that's the name of the data source okay and we define it as a view
+
+361
+00:41:22,830 --> 00:41:28,670
+against the global schema which is in essence a join of teachers and course on the course ID
+
+362
+00:41:28,670 --> 00:41:34,830
+makes a lot of sense also joins on the university so not just the same course ID but also
+
+363
+00:41:34,830 --> 00:41:43,070
+taught at the same university and the title of the course needs to end in databases right so I'm
+
+364
+00:41:43,070 --> 00:41:48,910
+is my shorthand for saying it's a database course because it the title ends in database okay
+
+365
+00:41:50,100 --> 00:41:56,260
+so this is nothing new this is precisely what schema matching I'm not showing this anymore
+
+366
+00:41:56,260 --> 00:42:00,100
+what schema mapping schema matching could produce right this is the same as we've always been
+
+367
+00:42:00,100 --> 00:42:09,180
+looking at okay so we oops we have a second data source all hpi lectures not all courses just the
+
+368
+00:42:09,180 --> 00:42:17,260
+lectures for lesung yeah and only those at hpi so again this is a data source it's called hpi
+
+369
+00:42:17,260 --> 00:42:25,100
+for lesung and it also joins the teachers and the course and it uses the join over the course
+
+370
+00:42:25,100 --> 00:42:33,020
+ID also the join over the university in a sense right and it says the title has to start with
+
+371
+00:42:33,020 --> 00:42:41,820
+for lesung so I know it's a lecture I'm assuming kind of standardized names of courses okay understood
+
+372
+00:42:41,820 --> 00:42:47,580
+yeah you might have seen this five years ago in your database one lecture if you attended it
+
+373
+00:42:47,580 --> 00:42:53,300
+with me because I show that example there as well to talk about materialized views okay good
+
+374
+00:42:53,380 --> 00:43:00,270
+so here comes a query this query says give me all professors who have taught
+
+375
+00:43:01,950 --> 00:43:09,310
+a database course at hpi that sounds like a reasonable query and you can see of course
+
+376
+00:43:09,310 --> 00:43:13,550
+it's a query against the global schema because that's what the user knows the user says okay this
+
+377
+00:43:13,550 --> 00:43:20,190
+is my query now I need to answer this query I want to rewrite this query so that it only uses
+
+378
+00:43:20,750 --> 00:43:28,380
+views right so in the from clause of the rewritten query I cannot allow anything but
+
+379
+00:43:28,380 --> 00:43:33,420
+view definitions and not a global course of the global relations so what would be an
+
+380
+00:43:33,420 --> 00:43:59,500
+appropriate rewriting you can tell me it's not complicated right so so just I mean you don't
+
+381
+00:43:59,500 --> 00:44:05,980
+know an algorithm to develop it right we will look at one I guess next week but just by thinking
+
+382
+00:44:05,980 --> 00:44:12,220
+about it right what are we asking here right and and how do I issue a query against the data sources
+
+383
+00:44:13,390 --> 00:44:21,730
+or against these views to answer this query you don't have to say the sequel just tell me what
+
+384
+00:44:21,730 --> 00:44:47,840
+we should be doing yeah go ahead inner drawing between those two sources okay okay okay so I
+
+385
+00:44:47,840 --> 00:44:54,560
+could for sure I could join them I agree they have the same schema right so so clearly I can
+
+386
+00:44:54,560 --> 00:45:00,960
+join them absolutely um actually I can still see here's a class ID this should be course
+
+387
+00:45:02,690 --> 00:45:23,630
+you know any better suggestions do I need to do that yes no no we can we can we can
+
+388
+00:45:24,510 --> 00:45:29,790
+no you can't edit the the view of course the view definition stays the same but we're now developing
+
+389
+00:45:29,790 --> 00:45:37,070
+a new query a fresh query yeah that in essence has to say select prof because that's what we want
+
+390
+00:45:37,070 --> 00:45:42,750
+to produce but now in the from we need something else and we can design anywhere clauses we want
+
+391
+00:45:42,750 --> 00:45:47,550
+right so if you want to add a filter somewhere be my guest right if you think it's it helps
+
+392
+00:45:48,110 --> 00:45:55,390
+absolutely but think about it I mean I think both of you are maybe all of you are thinking
+
+393
+00:45:55,390 --> 00:46:00,830
+it too complicated so we have a source that has all database courses we have a source that has
+
+394
+00:46:00,830 --> 00:46:08,480
+all lectures at hpi and now I am looking for all database courses at hpi where do I get that
+
+395
+00:46:08,480 --> 00:46:35,950
+data yeah right so so you don't actually have to join between these sources because the join
+
+396
+00:46:35,950 --> 00:46:44,190
+that is in this query is the same in some sense as the join that we have in the in the views
+
+397
+00:46:44,190 --> 00:46:49,790
+so actually it's a very simple rewriting whoops will be this one that's the rewriting right
+
+398
+00:46:50,770 --> 00:46:56,050
+so we're only using the first source right we only need to use the first source because
+
+399
+00:46:56,050 --> 00:47:00,530
+we're only filtering on databases that's exactly what the first source does and then we can add
+
+400
+00:47:00,530 --> 00:47:07,500
+the filter where university is hpi to that result agreed and that that would for sure be contained
+
+401
+00:47:07,500 --> 00:47:15,280
+in what we're looking for right so then here I've the current why not include source two
+
+402
+00:47:16,190 --> 00:47:21,630
+I mean why did I write it like this this is one you suggested I could do both and then union it
+
+403
+00:47:21,630 --> 00:47:25,950
+so why could I do both why only one what is it what would your argument be
+
+404
+00:47:25,950 --> 00:47:48,830
+to also go to source two right exactly right so so the answer could be in theory at least
+
+405
+00:47:48,830 --> 00:47:55,230
+source one delivers all database courses right I put that there right but but you're right to be
+
+406
+00:47:55,230 --> 00:47:59,870
+worried and say well they can promise all they want let's check source two maybe there's some
+
+407
+00:47:59,870 --> 00:48:05,710
+extra stuff I can find of course I can't find everything there even if source two is actually
+
+408
+00:48:05,710 --> 00:48:11,630
+complete and has all the hpi lectures there might be seminars database seminars that are not in source
+
+409
+00:48:11,630 --> 00:48:16,350
+two and they might be missing also in source one so I'm not going to get a complete result anyway
+
+410
+00:48:16,350 --> 00:48:22,430
+right but indeed it might make sense to go also to that other source right and this is exactly
+
+411
+00:48:23,070 --> 00:48:28,670
+the question about the closed versus open world assumption right in a closed world assumption
+
+412
+00:48:29,470 --> 00:48:36,510
+I a query is assumed to be able to deliver everything that it promises and there is no
+
+413
+00:48:36,510 --> 00:48:44,670
+data that is not part of that query result okay and in an open world assumption I do not have
+
+414
+00:48:44,670 --> 00:48:50,750
+that guarantee I have to assume that any query against the sources will only deliver a subset
+
+415
+00:48:51,390 --> 00:48:58,190
+of its semantics in the real world okay so but if if I did I had closed world assumption
+
+416
+00:48:58,190 --> 00:49:03,870
+it would actually be sufficient to only go to source one right but if I suspect it doesn't have
+
+417
+00:49:03,870 --> 00:49:12,370
+all my data then of course I will also go to source two okay good and then I do have an example
+
+418
+00:49:12,370 --> 00:49:17,250
+here a little bit about this open versus closed world assumption just just to kind of get a
+
+419
+00:49:17,890 --> 00:49:23,410
+feeling for this when did we meet yeah let's take a break let's take five minutes break and then
+
+420
+00:49:23,730 --> 00:49:30,700
+look at this example okay so this is just a kind of a well it's not a proof or generalization but
+
+421
+00:49:30,700 --> 00:49:35,260
+just kind of to show you this difference between open world and closed world assumption beyond
+
+422
+00:49:35,260 --> 00:49:39,660
+the example we just had so here's a generic situation we have a global schema with two
+
+423
+00:49:39,660 --> 00:49:46,060
+relations we have two local schemata and we have the local as view mapping where we basically
+
+424
+00:49:46,060 --> 00:49:52,140
+say how a local schema relates to the global schema in this case it's the join and the
+
+425
+00:49:52,140 --> 00:49:57,740
+other case they're just the same right and now we have some user query that is only interested in
+
+426
+00:49:57,740 --> 00:50:02,380
+stuff in relation b I don't really care what the select clause says just some attributes I don't
+
+427
+00:50:02,380 --> 00:50:07,980
+care what the where clause says just some selection condition right and under open world
+
+428
+00:50:07,980 --> 00:50:13,260
+assumption I would rewrite it to two queries this one here this one is obvious right relation
+
+429
+00:50:13,260 --> 00:50:22,460
+b is the same as relation d so I just query the exact same query to relation d right and I union it
+
+430
+00:50:22,460 --> 00:50:29,420
+with the result of this query so this query produces data that is of the join of a and b but it
+
+431
+00:50:29,420 --> 00:50:36,300
+also contains stuff from b right so then I would do a projection on only the attributes of b
+
+432
+00:50:36,300 --> 00:50:44,420
+but this relation c also delivers stuff that should be in the relation b right so so both
+
+433
+00:50:44,420 --> 00:50:51,700
+will deliver it in particular also interestingly in some sense relation c which is a join of the two
+
+434
+00:50:51,700 --> 00:50:58,420
+of course the result of the join has some tuples that are relevant for b right so I need those as
+
+435
+00:50:58,420 --> 00:51:03,300
+well and in the open world assumption and the closed world assumption is just not necessary
+
+436
+00:51:03,300 --> 00:51:09,380
+right so in the closed world assumption I have the same situation but if I'm interested in
+
+437
+00:51:10,100 --> 00:51:15,460
+well this is a different example the join of a and b all I need to do is go to relation c in this
+
+438
+00:51:15,460 --> 00:51:22,580
+particular example and I know I will get the entire result right what could I do in addition
+
+439
+00:51:22,580 --> 00:51:28,500
+if it weren't the closed world assumption well I could join the two right I could join oops
+
+440
+00:51:37,360 --> 00:51:45,520
+damn okay I could also join relation c with relation d right which in essence is saying
+
+441
+00:51:45,520 --> 00:51:51,360
+join the result of this with this which would also produce correct results but it's just not
+
+442
+00:51:51,360 --> 00:51:58,800
+necessary or if I go back to the previous slide this thing here would not be necessary under the
+
+443
+00:51:59,360 --> 00:52:05,310
+closed world assumption I could just remove that right just to give you some some ideas
+
+444
+00:52:05,310 --> 00:52:10,990
+right why in the closed world assumption why so I could remove this part I guess we can agree right
+
+445
+00:52:11,980 --> 00:52:19,740
+can I yes why can I not do it the other way around why can I not remove this one and just
+
+446
+00:52:19,740 --> 00:52:33,310
+keep that one just very briefly I hope this is simple right I'm looking for all tuples that
+
+447
+00:52:33,310 --> 00:52:42,380
+belong in relation b both relation c and d contain some information about b I want to answer this
+
+448
+00:52:42,380 --> 00:52:53,040
+query completely we have the closed world assumption why can I not only ask this question
+
+449
+00:52:53,760 --> 00:53:03,070
+and ignore the one above yeah very simple yeah we're going to lose some tuples right
+
+450
+00:53:03,070 --> 00:53:09,390
+this this here will produce only tuples from relation b that have a joint partner in a
+
+451
+00:53:10,030 --> 00:53:16,000
+but but the query the user query says all of b not just the semi-joint with a or something
+
+452
+00:53:16,000 --> 00:53:25,630
+like that right I mean it's obvious and maybe maybe too simple okay so um let's continue a new example
+
+453
+00:53:26,590 --> 00:53:35,630
+same schema same sources new query so the source one again just repeat has all database courses
+
+454
+00:53:36,270 --> 00:53:43,070
+in all of Germany supposedly and query two has all lectures at hpi and now the user is asking
+
+455
+00:53:43,630 --> 00:53:58,940
+for all hpi courses what is the rewritten query so this query only goes against the course right
+
+456
+00:53:58,940 --> 00:54:05,310
+it's not interested in who teaches anything it's really just the course but of course the course
+
+457
+00:54:05,310 --> 00:54:11,550
+table is part of the global schema there's no data there I have to rewrite it such that
+
+458
+00:54:11,550 --> 00:54:24,340
+it only uses these two relations what would be a correct rewriting there's no rocket science
+
+459
+00:54:24,420 --> 00:54:38,940
+it's not really strange or anything it's a simple answer I mean yeah it might be too simple I don't
+
+460
+00:54:38,940 --> 00:54:53,630
+know go ahead yeah yeah yes there you go it's exactly that right source one uh no source
+
+461
+00:54:54,190 --> 00:55:00,350
+now if you see the no source one I have to add the filter because it has it from all universities
+
+462
+00:55:00,350 --> 00:55:07,630
+and source two I just take whatever I can get no and then I union the two exactly right
+
+463
+00:55:09,120 --> 00:55:24,190
+what is missing conceptually yes exactly everything that is not for leasing and not databases
+
+464
+00:55:24,190 --> 00:55:30,540
+exactly right so I think I have an animation here oh no I don't I just have the question
+
+465
+00:55:30,540 --> 00:55:36,220
+so all operating system seminars would be missing right but that's life this is what our queries
+
+466
+00:55:37,020 --> 00:55:41,580
+what our data sources give us right so uh for sure the result will not be complete
+
+467
+00:55:42,300 --> 00:55:49,180
+it will only be contained we will have the concept of completeness with respect to the data sources
+
+468
+00:55:49,180 --> 00:55:53,500
+right so you could argue you shouldn't but you could argue well the results not going to be
+
+469
+00:55:53,500 --> 00:55:58,780
+complete anyway so I'll only go here you know I'll be able to deliver some results that's not
+
+470
+00:55:58,780 --> 00:56:03,260
+enough of course I mean you should make use of all the sources that you have even if you
+
+471
+00:56:03,260 --> 00:56:08,300
+know the final result is not going to be absolutely complete but it is what the data sources
+
+472
+00:56:08,300 --> 00:56:18,720
+provide to you right so here's again the the two queries that we had this needs to be English
+
+473
+00:56:20,210 --> 00:56:28,050
+missed a few points here so just exactly the same what we did the two rewritings that we had here
+
+474
+00:56:28,050 --> 00:56:36,290
+right and and just as a as a comparison basically the top one is complete under closed world assumption
+
+475
+00:56:36,290 --> 00:56:42,050
+and this is what we would call a maximal result but not a complete result right it's maximal with
+
+476
+00:56:42,050 --> 00:56:46,610
+respect to the sources but it's not complete because there might be operating system seminars
+
+477
+00:56:46,610 --> 00:56:51,730
+that are not part of the result they are modeled in the global schema conceptually right so whoever
+
+478
+00:56:51,730 --> 00:56:59,730
+wrote this query was expecting of course also uh operating system seminars right but the sources
+
+479
+00:56:59,730 --> 00:57:09,500
+just didn't have them stored okay we talked about that already okay so this is just what we talked
+
+480
+00:57:09,500 --> 00:57:17,340
+about earlier closed world assumption open world assumption is a bit more formal so the union
+
+481
+00:57:17,340 --> 00:57:22,780
+of all the data of the base relations corresponds to all relevant data right there's no extra data
+
+482
+00:57:23,980 --> 00:57:28,460
+elsewhere while in the open world assumption the union of all data from the data source
+
+483
+00:57:28,460 --> 00:57:35,150
+is a subset of all the relevant data there might be operating system seminars missing right the problems
+
+484
+00:57:35,150 --> 00:57:41,390
+here are the global relation content is not fixed right query results are subject to change if I ask
+
+485
+00:57:41,390 --> 00:57:47,710
+the same question again I might get a different result depending on what the sources are doing right
+
+486
+00:57:48,430 --> 00:57:51,950
+under closed world assumption in theory that shouldn't happen in practice of course it
+
+487
+00:57:51,950 --> 00:57:57,310
+might also happen so definition of completeness of results right what part of the world does
+
+488
+00:57:57,310 --> 00:58:02,830
+the result have what I was saying so we can be complete with respect to the data sources
+
+489
+00:58:02,830 --> 00:58:08,350
+but not with respect to the overall world and another difficulty under the open world assumption
+
+490
+00:58:08,350 --> 00:58:14,910
+is if you have queries with negation right because you know in an open world you don't
+
+491
+00:58:14,910 --> 00:58:21,150
+know what exists so you also cannot know what does not exist in a sense right in a closed
+
+492
+00:58:21,150 --> 00:58:26,350
+world assumption you know exactly this is the entire world so I can also say what doesn't exist
+
+493
+00:58:26,350 --> 00:58:30,750
+in this entire world because I know the entire world if I don't know the entire world negation
+
+494
+00:58:30,750 --> 00:58:36,510
+is in principle not possible to answer because I don't know if what I would like to answer might
+
+495
+00:58:36,510 --> 00:58:40,770
+actually exist somewhere I just don't have a data source for it right I think I have an example
+
+496
+00:58:40,770 --> 00:58:47,570
+here on the next slide um no well just examples of other situations because this these concepts
+
+497
+00:58:47,570 --> 00:58:52,210
+are important so let's say we have a relation a b it's a little bit weird example but bear with
+
+498
+00:58:52,210 --> 00:58:57,230
+me right it's a little bit weird but you'll see what kind of difficulties you get under these different
+
+499
+00:58:57,230 --> 00:59:04,190
+assumptions okay so you have one view so this is the global relation just has a b we have one view
+
+500
+00:59:04,190 --> 00:59:12,050
+view one which just says select a from r okay that's our view just a projection of r so view one
+
+501
+00:59:12,050 --> 00:59:19,010
+or data source one provides us a column of a values okay and in this case the column is really
+
+502
+00:59:19,010 --> 00:59:25,090
+short just has one value as the entire data source right the schema is just one column and the extension
+
+503
+00:59:25,090 --> 00:59:34,450
+so the data that we actually can fetch is just one value view two has only the other column b okay
+
+504
+00:59:34,450 --> 00:59:40,530
+just for the fun of it right and it also only has one tuple with one value in there so extreme case
+
+505
+00:59:41,330 --> 00:59:47,410
+okay so now along comes a query that says select star from r that sounds like a reasonable
+
+506
+00:59:47,410 --> 00:59:55,950
+query now the question is what the result should be right let me yeah okay yeah so i've already
+
+507
+00:59:55,950 --> 01:00:02,110
+cheated a little bit so what is the result of this query under closed world assumption and under
+
+508
+01:00:02,110 --> 01:00:12,850
+open world assumption let's first think about closed world assumption what is the result of
+
+509
+01:00:12,850 --> 01:00:17,360
+this query under the closed world assumption i you might have already just seen it right but
+
+510
+01:00:18,380 --> 01:00:33,170
+even if you have tell me why that's the result okay i mean i'll i'll just open it so the tuple a b
+
+511
+01:00:33,170 --> 01:00:40,690
+must be in the extension of r so i can confidently say a b is is the result even though there's no
+
+512
+01:00:40,690 --> 01:00:46,590
+connection between a and b right but this is the closed world assumption so there is no other
+
+513
+01:00:46,590 --> 01:00:53,150
+tuple that that the b could be connected with on the a side and there's no other tuple
+
+514
+01:00:53,150 --> 01:01:01,900
+that the a could be connected with on the b side right yes yeah i guess so right so you could
+
+515
+01:01:02,460 --> 01:01:08,700
+right so if we had null values then this is a different situation pretend they're not the
+
+516
+01:01:08,700 --> 01:01:14,380
+attributes say not not it's a it's a it's a bit a theoretical example so you're absolutely right
+
+517
+01:01:14,380 --> 01:01:18,780
+of course i could have null values but if i didn't have them this would be the result right if
+
+518
+01:01:18,780 --> 01:01:27,260
+there's any other combination with a like an x that x needs to be needs to appear also in b2 except
+
+519
+01:01:27,260 --> 01:01:33,500
+for the null values i agree right so in the under the open world assumption a b of course does not
+
+520
+01:01:33,500 --> 01:01:39,180
+have to be the extension of r i just don't know right it could be could not be i do not really
+
+521
+01:01:39,180 --> 01:01:44,380
+know right so i can't properly answer it so it could be the case that that is actually r
+
+522
+01:01:44,460 --> 01:01:48,380
+but it could also be the case that there's some other unknown x's and y's
+
+523
+01:01:49,500 --> 01:01:57,660
+that are present right so so i i can't answer this kind of a query properly basically right
+
+524
+01:01:57,660 --> 01:02:04,370
+i could add null values sure right that might be in practice something reasonable to do but
+
+525
+01:02:04,930 --> 01:02:20,670
+you know i just don't know what the real world looks like okay go ahead uh yeah so
+
+526
+01:02:21,630 --> 01:02:26,830
+it's a good question how so i have these two views what you're basically saying what is the
+
+527
+01:02:26,830 --> 01:02:32,640
+rewritten query right i guess i guess that's what you're saying that's a very good question
+
+528
+01:02:33,200 --> 01:02:38,430
+uh we don't have any join attributes on which we could join um so i'm not sure to be honest i
+
+529
+01:02:38,430 --> 01:02:53,460
+it's a good question yeah if we had that i agree right but then we but that would be a
+
+530
+01:02:53,540 --> 01:03:02,420
+different situation right so if we if we say there's uh r is actually a key and a and b somehow right
+
+531
+01:03:02,420 --> 01:03:10,260
+and i wanted and i want to select uh my query is not select star but is select a b let's say i i'm
+
+532
+01:03:10,260 --> 01:03:17,700
+just going along i don't know what we're going here right um and then we would imagine the extension
+
+533
+01:03:17,700 --> 01:03:26,320
+here had the same k here right then we could of course join and produce that result under the
+
+534
+01:03:26,320 --> 01:03:34,240
+closed world assumption all of that makes a lot of sense under the open world assumption i agree we'd
+
+535
+01:03:34,240 --> 01:03:44,050
+have this difference uh it would not be clear so i have the same key well i should i should be able
+
+536
+01:03:44,050 --> 01:03:48,770
+to join them even under even under the open world assumption yeah so i would because it's it's
+
+537
+01:03:48,770 --> 01:03:54,770
+still a join on the key the key is something global right if the source promises i have a key
+
+538
+01:03:54,770 --> 01:03:59,890
+then then of course i should also be able to join on that key like the ispn or something like that
+
+539
+01:03:59,890 --> 01:04:07,090
+so then i would indeed also have a b i just would not be sure whether there's some other stuff
+
+540
+01:04:08,130 --> 01:04:13,340
+also around so but this is a good question i haven't thought about it so uh what is the
+
+541
+01:04:13,340 --> 01:04:21,580
+rewritten query i mean this is kind of a strange case so um i'm not going to promise that there's
+
+542
+01:04:21,580 --> 01:04:28,620
+something reasonable uh there okay this is just thinking about the open and closed world assumption
+
+543
+01:04:28,620 --> 01:04:34,340
+and not running an algorithm i'll have to think about a little bit that's a very good question
+
+544
+01:04:35,760 --> 01:04:42,900
+okay so open world closed world assumption now um uh back to the query processing right so we
+
+545
+01:04:42,980 --> 01:04:50,420
+have a query we have a bunch of views the uh task we need to solve is find the rewritten query right
+
+546
+01:04:50,420 --> 01:04:54,980
+that is either equivalent if we're doing query optimization something like that or what we're
+
+547
+01:04:54,980 --> 01:05:02,100
+looking for is maximally contained right so we're looking for uh a rewritten query such that
+
+548
+01:05:02,100 --> 01:05:09,140
+i mean for sure it will be contained right this is what we need right but we're we wanted
+
+549
+01:05:09,140 --> 01:05:16,340
+maximally contained we want to say there's no q uh double prime that i could squeeze in there
+
+550
+01:05:16,340 --> 01:05:22,580
+it needs to be maximally contained right i want i want the full result okay so uh the problem
+
+551
+01:05:22,580 --> 01:05:28,100
+that we need to solve then is how to define and test equivalence and maximal containment right
+
+552
+01:05:28,100 --> 01:05:33,860
+how do we know that so we rewrite a query uh we want to be able to test equivalence or test
+
+553
+01:05:33,940 --> 01:05:39,140
+containment uh this is what we're going to be talking about next and then finally but not today
+
+554
+01:05:39,140 --> 01:05:45,940
+anymore we will also have an algorithm that will produce a rewritten query right and the algorithm
+
+555
+01:05:45,940 --> 01:05:51,780
+is designed such that it is its result is maximally contained so you could now in theory at least
+
+556
+01:05:51,780 --> 01:05:56,820
+ignore the whole next part uh because this is just the theory part in a sense right and you
+
+557
+01:05:56,820 --> 01:06:00,900
+could just rely on the algorithm and somebody else proved that this is correct and you will
+
+558
+01:06:01,460 --> 01:06:06,510
+in theory at least never been a situation where you need to check containment in this
+
+559
+01:06:07,390 --> 01:06:10,910
+in data integration because you're just going to use the algorithm that will guarantee to produce
+
+560
+01:06:10,910 --> 01:06:14,750
+something that is contained right but nevertheless obviously it's a little bit it is interesting
+
+561
+01:06:14,750 --> 01:06:19,710
+to think about it a little bit and so this is what we're going to okay so you can see i'm repeating
+
+562
+01:06:19,710 --> 01:06:25,470
+myself again and again we have the query we have a view or a plan the question is uh is the result
+
+563
+01:06:25,470 --> 01:06:32,590
+of the view or the plan identical to the result so are they the same um and if that is if this is the
+
+564
+01:06:32,590 --> 01:06:39,070
+question right then actually we can boil it down to two containment questions right so we can reduce it
+
+565
+01:06:39,070 --> 01:06:42,750
+to a question about containment because if the view is contained in the query and the query is
+
+566
+01:06:42,750 --> 01:06:46,270
+contained in the view then they are equivalent right so we don't need to solve the first
+
+567
+01:06:46,270 --> 01:06:53,440
+problem at all we just solve the other one twice this is clear right okay right and when I say
+
+568
+01:06:53,440 --> 01:06:58,640
+v and q etc it's all everything's always the same right doesn't really matter what we're talking
+
+569
+01:06:58,640 --> 01:07:05,680
+about here right so here this is of course the user query and this is the view or it's the plan
+
+570
+01:07:05,680 --> 01:07:10,480
+across the views in the end it's just one big query for which i'm wondering is the result
+
+571
+01:07:10,480 --> 01:07:20,210
+contained right okay so query containment right um this is what we had on a previous slide right
+
+572
+01:07:20,210 --> 01:07:28,770
+we say a query is contained um um um so one query is contained in another query if the results
+
+573
+01:07:29,410 --> 01:07:35,730
+by x of executing the query on any data set uh is the same for any data set okay this is exactly
+
+574
+01:07:35,730 --> 01:07:39,890
+what we had earlier there we called it instance here we call it data set doesn't matter it's
+
+575
+01:07:39,890 --> 01:07:44,930
+the same thing okay so actually maybe I should rewrite it just to not cause any confusion
+
+576
+01:07:45,840 --> 01:07:50,960
+I will correct that right but I hope your mind is good enough to be able to abstract
+
+577
+01:07:52,000 --> 01:07:58,450
+that is the same thing okay so this was uh these are two questions let's have a look at them
+
+578
+01:07:58,450 --> 01:08:06,450
+right so we have a query against teachers and course and with some joins some predicates
+
+579
+01:08:08,340 --> 01:08:13,090
+what is containment here this is not a proof of any kind it's just an example so so
+
+580
+01:08:14,050 --> 01:08:27,100
+which direction do we have containment or maybe even equivalence here it's not very difficult yeah go
+
+581
+01:08:27,100 --> 01:08:39,680
+ahead yes why oops why actually it's probably yeah yeah because the subset is that would be the
+
+582
+01:08:39,680 --> 01:08:44,400
+definition but indeed it's a it's it is a subset or is contained because it has
+
+583
+01:08:44,400 --> 01:08:49,040
+an additional predicate so it can only be smaller maybe it's the same we don't know but
+
+584
+01:08:49,120 --> 01:08:57,760
+but uh for sure it is smaller right uh some more examples so now we're comparing this query with
+
+585
+01:08:57,760 --> 01:09:24,350
+this query here yeah so you're saying they're equivalent any other opinions no yes okay so it's
+
+586
+01:09:24,350 --> 01:09:32,820
+a trick question go ahead exactly so it's a trick question right uh the projection is different
+
+587
+01:09:32,820 --> 01:09:42,030
+right the one is not oops one is not contained in the other sorry this is again my Jesus
+
+588
+01:09:42,030 --> 01:09:46,990
+right uh here's university up there is course ID just different tuples there's no relation
+
+589
+01:09:46,990 --> 01:09:52,990
+whatsoever right in your mind maybe right but the projection is is the problem right so you
+
+590
+01:09:52,990 --> 01:10:04,060
+have to look closely in a sense so what about the right hand side yeah yeah no same same problem
+
+591
+01:10:04,060 --> 01:10:09,740
+now now you could I mean you could say contained but containment is it is talking about the
+
+592
+01:10:09,740 --> 01:10:15,020
+relations and and not about the attributes I know what you mean of course right so it's
+
+593
+01:10:15,020 --> 01:10:19,980
+contained in two ways in a sense right but but that's just not the case so we're talking about
+
+594
+01:10:22,140 --> 01:10:27,740
+one being a subset of the other in terms of tuples you couldn't know that but now you do right
+
+595
+01:10:29,980 --> 01:10:35,900
+and of course for practical purposes right you might be totally happy to execute that query
+
+596
+01:10:35,900 --> 01:10:41,340
+and say well at least I have some titles right but that's not what the original query asked for
+
+597
+01:10:42,690 --> 01:11:19,230
+okay good what about this one here yeah go ahead yes so um yeah I mean this is correct absolutely
+
+598
+01:11:19,230 --> 01:11:24,270
+so the maybe confusing part is that there's a join above but in the end I'm only interested
+
+599
+01:11:24,270 --> 01:11:28,990
+in the courses exactly and in one case I'm just interested in all courses of Humbert and the
+
+600
+01:11:28,990 --> 01:11:34,110
+other one I'm those that are actually taught at Humbert University but so that has to be a
+
+601
+01:11:34,110 --> 01:11:40,270
+subset right so you know the fact that we're joining some things is not a problem with respect
+
+602
+01:11:40,270 --> 01:11:47,070
+to containment right and this is exactly the case that we had in all these examples maybe here
+
+603
+01:11:47,070 --> 01:11:52,510
+right where we're saying one relation is contained in the join of the other relations this is
+
+604
+01:11:52,510 --> 01:11:58,670
+exactly what we had here right where we say C is contained in the join of those two right this
+
+605
+01:11:59,630 --> 01:12:04,350
+well actually here's the other way around but anyway so we're relating plans a plan could be one
+
+606
+01:12:05,310 --> 01:12:12,060
+relation could be a join of multiple relations we don't need to worry so much okay so
+
+607
+01:12:13,260 --> 01:12:17,660
+checking containment by checking all possible databases obviously is not what we want to do
+
+608
+01:12:17,660 --> 01:12:23,580
+so we what we can do is check containment by finding a so-called containment mapping
+
+609
+01:12:23,660 --> 01:12:29,260
+so we will find a mapping it's not schema mapping close but not quite it's a containment mapping
+
+610
+01:12:29,980 --> 01:12:35,020
+that maps all elements from one query to all elements of the other query and if such a mapping
+
+611
+01:12:35,020 --> 01:12:43,420
+exists then containment is true right this was proven by Chandra and Marilyn in 1977 a very
+
+612
+01:12:43,420 --> 01:12:49,900
+old but fundamental theorem about queries there are various algorithms that do this right
+
+613
+01:12:50,620 --> 01:12:56,910
+what happened here there are various algorithms that do this we will not look at an algorithm but
+
+614
+01:12:56,910 --> 01:13:01,310
+I will show you the definition and I'll show you some examples to show why it's not trivial
+
+615
+01:13:01,950 --> 01:13:06,110
+in all the cases we've looked at it's trivial because we had tiny queries and it's all super
+
+616
+01:13:06,110 --> 01:13:10,830
+obvious I'll show you one example where it's not obvious but anyway so let's see we're looking
+
+617
+01:13:10,830 --> 01:13:18,590
+for containment mapping right so if we want to prove this relationship this containment
+
+618
+01:13:19,550 --> 01:13:25,070
+this is equivalent to the existence of a containment mapping from u to p so from the
+
+619
+01:13:25,070 --> 01:13:30,110
+larger part to the smaller part right so everything in the larger part in the super set
+
+620
+01:13:30,110 --> 01:13:35,260
+has to be mapped to something in the smaller part right so how do we do it
+
+621
+01:13:36,380 --> 01:13:41,020
+basically what we're doing is we're mapping the symbols of the query think of the query as
+
+622
+01:13:41,020 --> 01:13:46,700
+containing relations and attributes and constants right that's how you write down a query
+
+623
+01:13:47,460 --> 01:13:52,100
+forget about the select from where you know those are just sequel keywords but the symbols are
+
+624
+01:13:52,740 --> 01:14:00,420
+the the constants right it's like Humboldt or databases they are the relations and they are the
+
+625
+01:14:00,420 --> 01:14:06,900
+attributes right and the mapping has to show that each constant in u is mapped to the same constant
+
+626
+01:14:06,900 --> 01:14:13,780
+in p so if there's some kind of a restriction university gleich Humboldt or so right that
+
+627
+01:14:13,860 --> 01:14:19,300
+has to be mapped to the same restriction in the contained one otherwise it would be bigger right if
+
+628
+01:14:19,300 --> 01:14:25,220
+there were no Humboldt restriction in in p then it wouldn't be a subset of whatever is in u
+
+629
+01:14:25,860 --> 01:14:30,740
+yeah I think this is obvious here you might wonder and we've talked about that when we looked at
+
+630
+01:14:31,380 --> 01:14:36,660
+you know the constraints at the source of the target you don't have to worry too much
+
+631
+01:14:37,620 --> 01:14:43,060
+about this part because if there is a constant in the global schema you can just add that
+
+632
+01:14:43,380 --> 01:14:49,460
+restriction to your plan right so if you had a source that doesn't particularly restrict on
+
+633
+01:14:49,460 --> 01:14:53,940
+Humboldt university but your global schema does no problem just add where university gleich Humboldt
+
+634
+01:14:54,900 --> 01:14:59,700
+equals Humboldt to your query right so that's not a problem you still have to do it right
+
+635
+01:14:59,700 --> 01:15:05,760
+to to be contained but but that's what we're looking for each exported variable so each
+
+636
+01:15:05,760 --> 01:15:11,520
+attribute in u is mapped to an exported at a variable in p right everything that you provide
+
+637
+01:15:12,000 --> 01:15:16,240
+p also has to deliver this is the example we had earlier if there's an attribute missing it
+
+638
+01:15:16,240 --> 01:15:23,140
+can't be contained okay I think this is also quite obvious right and then this is maybe the
+
+639
+01:15:23,140 --> 01:15:30,020
+interesting part each literal in u is mapped to at least one literal in p these are the relations
+
+640
+01:15:30,020 --> 01:15:35,140
+so every relation in u has to be mapped to at least one maybe multiple relations in p
+
+641
+01:15:35,700 --> 01:15:40,340
+so they have to talk about the same base relations in a sense right
+
+642
+01:15:41,300 --> 01:15:48,100
+this is necessary to guarantee that for any instance we get the same results they have to
+
+643
+01:15:48,100 --> 01:15:55,780
+refer to the same base relations otherwise there's no chance right if if u is some join over two
+
+644
+01:15:55,780 --> 01:16:03,300
+relations and p only uses one of those relations then clearly we won't be able to show a containment
+
+645
+01:16:03,380 --> 01:16:10,420
+right they have to talk about the same base data to to prove a containment and then finally
+
+646
+01:16:11,140 --> 01:16:19,300
+the conditions of p imply the conditions of u they have to be stricter right or or the same
+
+647
+01:16:19,300 --> 01:16:25,060
+right they can't be looser right any constraints as in size greater than 10 or
+
+648
+01:16:25,140 --> 01:16:33,220
+so for instance we had the example of humboldt we said well if there's a you know university
+
+649
+01:16:33,220 --> 01:16:38,580
+equals humboldt in u we have to be able to map that also to university equals humboldt in p
+
+650
+01:16:39,300 --> 01:16:48,020
+but p could also have a course type is lecture which is not a restriction in u
+
+651
+01:16:49,120 --> 01:16:54,480
+but still the conditions on p imply those of you they are just even stricter right so that's
+
+652
+01:16:54,640 --> 01:17:01,600
+that is allowed right they just can't be can't be broader okay so let's look at some
+
+653
+01:17:02,720 --> 01:17:08,720
+examples this is one example that we had in in one of our older lectures this is about
+
+654
+01:17:09,760 --> 01:17:14,960
+genes and gene mappings and expressions and stuff like that but anyway we have a join here on
+
+655
+01:17:14,960 --> 01:17:21,360
+the left hand side two relations right map and clone and the join is implicitly over
+
+656
+01:17:21,360 --> 01:17:27,760
+same attribute names and here we just have this thing here we just have one relation this is in
+
+657
+01:17:27,760 --> 01:17:35,520
+essence select mn and ms from map and we find this mapping here so this is the containment mapping
+
+658
+01:17:35,520 --> 01:17:40,720
+this thing maps to this guy here this thing maps to this guy this thing maps to this guy this is
+
+659
+01:17:40,720 --> 01:17:47,440
+not a problem it just adds an extra join that does not hinder containment right let's look at some
+
+660
+01:17:50,030 --> 01:17:55,440
+sorry yeah let me let's just look at some examples I think this is useful
+
+661
+01:17:55,440 --> 01:17:59,120
+actually let's look at any well let's look at these examples just very briefly these are all
+
+662
+01:17:59,120 --> 01:18:05,280
+quite obvious right so we have the same relation the same attributes here just one condition clearly
+
+663
+01:18:05,280 --> 01:18:11,920
+there's containment here right here we have the condition on the right hand side I can't
+
+664
+01:18:11,920 --> 01:18:18,800
+find a mapping to this guy over here so no containment right again quite obvious right
+
+665
+01:18:18,800 --> 01:18:24,240
+what else do we have here we're just talking about completely different relations no mapping
+
+666
+01:18:24,240 --> 01:18:31,520
+obviously no containment right here we have specific conditions here and here but those
+
+667
+01:18:31,520 --> 01:18:43,840
+conditions do not imply those conditions here so so no containment right here we do we do have
+
+668
+01:18:43,840 --> 01:18:49,280
+containment here's basically an extra join we join on the left hand side and this is contained in
+
+669
+01:18:49,280 --> 01:18:55,040
+the query on the right hand side assuming we're using the right attributes when and and so the
+
+670
+01:18:55,040 --> 01:19:00,160
+attributes are are present so this is all trivial stuff really easy right let's look at a more
+
+671
+01:19:00,160 --> 01:19:06,160
+interesting case how about this one here so this is this is why these these are notorious
+
+672
+01:19:06,160 --> 01:19:12,480
+cases why containment mapping is difficult so we have a global relation called path
+
+673
+01:19:13,120 --> 01:19:19,600
+we're in essence modeling a graph okay and and a path is a relation with two nodes of two attributes
+
+674
+01:19:19,600 --> 01:19:25,280
+each attribute is a node and if there's a tuple you know a b it means there's a path from node a to
+
+675
+01:19:25,280 --> 01:19:31,120
+node b it's a very simple way of modeling a graph just pairs of nodes as in the paths
+
+676
+01:19:31,120 --> 01:19:39,200
+okay so I have my query two and am I query one query two what does query two look for it looks
+
+677
+01:19:39,200 --> 01:19:50,770
+for a path from a to c okay it asks is there a path from a to c and it can continue to d I'm
+
+678
+01:19:50,770 --> 01:19:55,890
+not interested in the d I'm only interested in the c but there has to exist also that d
+
+679
+01:19:56,910 --> 01:20:04,720
+that's my query right I'm looking for friends of friends that have other friends think of it
+
+680
+01:20:04,720 --> 01:20:14,990
+that way okay it's a graph query okay and the query below is interested in also paths a b b c c d d e so
+
+681
+01:20:14,990 --> 01:20:24,160
+a longer path and it is interested in those two nodes b this b here and this d here in essence
+
+682
+01:20:25,120 --> 01:20:41,630
+so do we have containment here time's almost up so one obvious way of thinking about the
+
+683
+01:20:41,710 --> 01:20:47,870
+problem will be this right we have to find a mapping okay so if we look at this mapping here
+
+684
+01:20:47,870 --> 01:20:56,700
+right we we could map the blue right we could say okay path is path a is a b is b we map everything
+
+685
+01:20:56,700 --> 01:21:02,220
+map everything wonderful and there's an extra join here who cares about that one right we should have
+
+686
+01:21:03,420 --> 01:21:07,580
+containment in this direction right that that could be a way of thinking about it right
+
+687
+01:21:07,580 --> 01:21:14,540
+that's how it looks but if you do that mapping then in the source in the in the in the projection
+
+688
+01:21:14,540 --> 01:21:21,580
+you would be mapping you know there's no mapping from a to b there's no mapping from c to d because
+
+689
+01:21:21,580 --> 01:21:29,660
+a is mapped to a and c is mapped to c so this would not fit with respect to the head of the query
+
+690
+01:21:29,660 --> 01:21:36,690
+so the projection that we're looking for but there is a better mapping right so this is exactly
+
+691
+01:21:36,770 --> 01:21:44,690
+the same situation but if we map that way it actually works out right you know don't be fooled
+
+692
+01:21:44,690 --> 01:21:52,050
+by all the attribute names right if a maps to b b maps to c etc etc then we have a wonderful mapping
+
+693
+01:21:52,050 --> 01:21:58,290
+a to b c to d and it all works out and there is also an extra join here right but that's not
+
+694
+01:21:58,290 --> 01:22:05,090
+a problem that just is an extra restriction so indeed we have this relationship right by finding
+
+695
+01:22:05,090 --> 01:22:10,850
+this correct mapping okay so so you can see by this that you know it can get tricky you have to look
+
+696
+01:22:10,850 --> 01:22:17,810
+at all combinations of what fits where such that all attributes are correctly present in the results
+
+697
+01:22:17,810 --> 01:22:25,650
+I have one more example over here right you can you know see again this is a query about sales
+
+698
+01:22:25,650 --> 01:22:31,010
+and their their sale time and you can also do a mapping here you can look at all the results
+
+699
+01:22:31,730 --> 01:22:39,810
+um so there is a containment mapping in principle you could say well the sales id is x t id is y etc etc
+
+700
+01:22:39,810 --> 01:22:45,170
+but the conditions don't hold so one condition does not imply the other one as you know these
+
+701
+01:22:45,170 --> 01:22:49,250
+these conditions here so again we don't have a containment mapping even though we found a nice
+
+702
+01:22:49,970 --> 01:22:57,090
+mapping of attributes okay and and literals okay so this just goes to show last slide for today
+
+703
+01:22:57,810 --> 01:23:05,680
+just circling it back to schema mapping I have to translate this remember this slide right
+
+704
+01:23:06,880 --> 01:23:15,790
+what we were doing is interpreting these schema mappings and we had these queries and these
+
+705
+01:23:15,790 --> 01:23:23,310
+queries and we're doing nothing but specifying containment the schema mapping says if I join
+
+706
+01:23:23,870 --> 01:23:31,550
+filmen and spenden right and do that projection that is a subset or that is contained in the
+
+707
+01:23:32,670 --> 01:23:39,550
+you know let's call it a join of the house IDB and the book right this is exactly what we've been
+
+708
+01:23:39,550 --> 01:23:45,230
+doing right we've been saying okay this query over here produces data for that side
+
+709
+01:23:45,790 --> 01:23:49,630
+we're doing nothing but talking about containment so this is precisely
+
+710
+01:23:49,630 --> 01:23:56,910
+what schema mappings are producing they are producing pairs of queries that are contained right
+
+711
+01:23:56,910 --> 01:24:07,740
+and now these are queries against the data sources and I can combine them I could do a join between
+
+712
+01:24:07,740 --> 01:24:13,500
+them stuff like that to produce results for my target right so this is you know it all fits
+
+713
+01:24:13,500 --> 01:24:16,700
+together because we're always talking about the same thing in the end it's all queries
+
+714
+01:24:16,700 --> 01:24:22,850
+and containment of them that's all we're talking about the whole time okay so I hope that makes sense
+
+715
+01:24:22,850 --> 01:24:29,250
+to you and then query rewriting I said it was the last query so the last slide so actually we'll
+
+716
+01:24:29,250 --> 01:24:35,090
+skip this so right again I hope it makes sense that we're basically saying well we we are
+
+717
+01:24:35,090 --> 01:24:38,930
+talking about queries queries against the source query against the target and we just have to
+
+718
+01:24:38,930 --> 01:24:43,490
+make sure that they are if we want to talk about containment that they are against the same
+
+719
+01:24:43,490 --> 01:24:51,330
+schema usually it's the global schema while they are then rewritten as queries against the
+
+720
+01:24:51,330 --> 01:24:59,460
+data sources okay that's the whole trick okay so on Thursday we will have a test exam right it's
+
+721
+01:24:59,460 --> 01:25:08,450
+already finished in a sense I think there might even be a question like where did we have them
+
+722
+01:25:08,450 --> 01:25:13,250
+like these in there as easy kind of questions talking about containment right and a whole
+
+723
+01:25:13,250 --> 01:25:30,670
+bunch of other questions so I'm looking forward to seeing you there yes uh yes you can I'm wondering
+
+724
+01:25:30,670 --> 01:25:36,110
+what the easiest way I mean we do want to collect them and correct them and grade them and we do want
+
+725
+01:25:36,110 --> 01:25:47,470
+to go to that effort you think it's not necessary even go ahead yeah well we want to grade them but
+
+726
+01:25:47,470 --> 01:25:51,870
+not the grade is irrelevant it's not going to go into your final grade it's only for you
+
+727
+01:25:53,920 --> 01:26:06,180
+it's still too embarrassing is that is that what you're saying okay so I whatever I don't care right
+
+728
+01:26:06,180 --> 01:26:12,180
+so so I'm I mean in the easiest case if we want to we could just not do the test and I just give
+
+729
+01:26:12,180 --> 01:26:16,980
+you an example test with the most elder zone and just hand it out and you're done everybody's
+
+730
+01:26:16,980 --> 01:26:22,900
+not that's that's more useful actually really okay I thought it would be okay yeah but then
+
+731
+01:26:22,900 --> 01:26:28,500
+we're not grading it but okay the question is do you have the discipline to actually
+
+732
+01:26:28,580 --> 01:26:33,860
+solve the exam for on your own or just look at it say yeah yeah make sense make sense make sense
+
+733
+01:26:33,860 --> 01:26:44,420
+because that's not what the otherwise you could just look at slides I guess right go ahead aha
+
+734
+01:26:47,300 --> 01:26:54,240
+okay I can do that as well any sure that that's fine with me if that's what you'd like to do
+
+735
+01:26:57,220 --> 01:27:18,460
+but what yeah fair enough I mean this is fine I thought we I thought we know we're going the
+
+736
+01:27:18,460 --> 01:27:22,220
+extra mile but if this is actually not even needed that's also fine okay
+
+737
+01:27:25,680 --> 01:27:57,010
+yeah go ahead yeah if I had if you had studied properly yeah yeah I get it also wonderful right
+
+738
+01:27:57,010 --> 01:28:02,850
+so I think one of the reasons why we're doing this test exam is that you would like to understand
+
+739
+01:28:02,850 --> 01:28:10,210
+the kind of questions to expect right and and that I guess you could already look at earlier
+
+740
+01:28:10,210 --> 01:28:13,330
+right even if you don't want to actually solve because the okay these are the kind of questions
+
+741
+01:28:13,330 --> 01:28:20,370
+right and and then and then solve it two or three days before the actual exam look at the muster
+
+742
+01:28:20,370 --> 01:28:28,290
+lösung be happy and then come prepared to the final exam okay so so a protocol could be we
+
+743
+01:28:29,010 --> 01:28:35,010
+hand out the the actual the exam I mean I'm happy to send it as a PDF I don't mind right
+
+744
+01:28:35,010 --> 01:28:40,610
+this is just a test right it's also shorter because we plan for you know just an hour here basically
+
+745
+01:28:42,130 --> 01:28:46,450
+so I send it out and then when I mean how much self-discipline do you have when do you actually
+
+746
+01:28:46,450 --> 01:28:52,210
+want to get the the the how do you say I'm always saying muster lösung so the corrections
+
+747
+01:28:52,210 --> 01:28:58,290
+basically or the the solutions when do you want it who who doesn't who has enough discipline
+
+748
+01:28:58,290 --> 01:29:03,730
+to not look at them and not care about them okay you guys okay okay fine so we'll just send
+
+749
+01:29:03,730 --> 01:29:07,970
+both versions I could just send only the muster lösung but then you don't have a good empty version
+
+750
+01:29:07,970 --> 01:29:15,490
+so I'll send two files or I'll upload two files in essence to to Moodle okay that's fine with me
+
+751
+01:29:15,490 --> 01:29:20,850
+so but then but that's great because then we can just do a lecture on Thursday right I mean
+
+752
+01:29:21,490 --> 01:29:25,090
+none of it I mean we are behind I mean not behind there's no behind but
+
+753
+01:29:25,090 --> 01:29:30,530
+we have missed quite a few so so I think that's that's actually good we'll continue this
+
+754
+01:29:30,530 --> 01:29:36,770
+this is almost done here this this part and then I have not yet decided on whether to look at
+
+755
+01:29:39,380 --> 01:29:44,900
+whether to look at inclusion dependencies or look at data quality but I'll I'll think about
+
+756
+01:29:44,900 --> 01:29:50,420
+both is good maybe we'll have time for both I'll think about it okay good so see you on Thursday
+
+757
+01:29:51,380 --> 01:29:52,180
+thanks
+
