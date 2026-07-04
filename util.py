@@ -70,6 +70,13 @@ def ocr_crop(roi_bgr) -> list:
     return tokenize(text)
 
 
+def format_timestamp(seconds: float) -> str:
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    return f"{h:02d}:{m:02d}:{s:06.3f}"
+
+
 def find_aoi_corner(bgr, ksize=3, threshold=80, angle_tol=6):
     """Return (x_crop, y_crop) of the slide AOI upper-left corner."""
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)

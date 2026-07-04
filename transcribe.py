@@ -19,6 +19,10 @@ import fitz
 import numpy as np
 from faster_whisper import WhisperModel
 
+from assignment_model import AssignmentModel, SlideHandler, export_script
+from frame_reader import FrameReader
+from util import find_aoi_corner, format_timestamp
+
 
 def extract_audio(video_path: Path, audio_path: Path) -> None:
     cmd = [
@@ -35,20 +39,6 @@ def extract_audio(video_path: Path, audio_path: Path) -> None:
         print(f"ffmpeg error:\n{result.stderr}", file=sys.stderr)
         sys.exit(1)
 
-
-def format_timestamp(seconds: float) -> str:
-    h = int(seconds // 3600)
-    m = int((seconds % 3600) // 60)
-    s = seconds % 60
-    return f"{h:02d}:{m:02d}:{s:06.3f}"
-
-
-_TARGET_SIZE = (128, 128)
-
-
-# ---------------------------------------------------------------------------
-# Frame extraction
-# ---------------------------------------------------------------------------
 
 def _extract_frame_bgr(video_path: Path, timestamp: float) -> np.ndarray | None:
     """Return a full-resolution BGR frame at timestamp, or None on failure."""
@@ -68,75 +58,6 @@ def _extract_frame_bgr(video_path: Path, timestamp: float) -> np.ndarray | None:
     return cv2.imdecode(arr, cv2.IMREAD_COLOR)
 
 
-# ---------------------------------------------------------------------------
-# Normalization (shared by frames and slides)
-# ---------------------------------------------------------------------------
-
-def _normalize_frame(gray: np.ndarray) -> np.ndarray:
-    """Resize a grayscale uint8 array to TARGET_SIZE and apply mean/std normalization."""
-    resized = cv2.resize(gray, _TARGET_SIZE, interpolation=cv2.INTER_LANCZOS4)
-    arr = resized.astype(np.float32)
-    mean, std = arr.mean(), arr.std()
-    return (arr - mean) / (std if std > 0 else 1.0)
-
-
-# ---------------------------------------------------------------------------
-# Area-of-interest calibration (double-pass Sobel + Hough)
-# ---------------------------------------------------------------------------
-
-def _find_aoi_corner(
-    frame_bgr: np.ndarray,
-    ksize: int = 3,
-    threshold: int = 80,
-    angle_tol: int = 6,
-) -> tuple[int | None, int | None]:
-    """
-    Detect the upper-left corner of the slide area in a full-res BGR frame.
-    Returns (x_from_longest_vertical_line, y_from_longest_horizontal_line).
-    The transformation applied here is purely for detection — it is discarded afterwards.
-    """
-    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, (5, 5), 0)
-
-    sx  = cv2.Sobel(blur, cv2.CV_64F, 1, 0, ksize=ksize)
-    sy  = cv2.Sobel(blur, cv2.CV_64F, 0, 1, ksize=ksize)
-    sx2 = cv2.Sobel(np.abs(sx), cv2.CV_64F, 1, 0, ksize=ksize)
-    sy2 = cv2.Sobel(np.abs(sy), cv2.CV_64F, 0, 1, ksize=ksize)
-
-    bx = cv2.threshold(cv2.convertScaleAbs(sx + 3 * sx2), threshold, 255, cv2.THRESH_BINARY)[1]
-    by = cv2.threshold(cv2.convertScaleAbs(sy + 3 * sy2), threshold, 255, cv2.THRESH_BINARY)[1]
-
-    k_v = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 40))
-    k_h = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
-    closed = cv2.bitwise_or(
-        cv2.morphologyEx(bx, cv2.MORPH_CLOSE, k_v),
-        cv2.morphologyEx(by, cv2.MORPH_CLOSE, k_h),
-    )
-
-    lines = cv2.HoughLinesP(
-        closed, rho=1, theta=np.pi / 180, threshold=40,
-        minLineLength=40, maxLineGap=50,
-    )
-
-    h_lines: list[tuple[float, np.ndarray]] = []
-    v_lines: list[tuple[float, np.ndarray]] = []
-    if lines is not None:
-        for line in lines:
-            x1, y1, x2, y2 = line[0]
-            length = np.hypot(x2 - x1, y2 - y1)
-            if abs(y2 - y1) <= angle_tol:
-                h_lines.append((length, line[0]))
-            elif abs(x2 - x1) <= angle_tol:
-                v_lines.append((length, line[0]))
-
-    h_lines.sort(key=lambda t: -t[0])
-    v_lines.sort(key=lambda t: -t[0])
-
-    x_crop = int((v_lines[0][1][0] + v_lines[0][1][2]) / 2) if v_lines else None
-    y_crop = int((h_lines[0][1][1] + h_lines[0][1][3]) / 2) if h_lines else None
-    return x_crop, y_crop
-
-
 def calibrate_crop_corner(seg_list, video_path: Path, n: int = 10) -> tuple[int, int]:
     """
     Sample n evenly-spaced segments, detect the AOI corner in each frame,
@@ -149,7 +70,7 @@ def calibrate_crop_corner(seg_list, video_path: Path, n: int = 10) -> tuple[int,
         frame_bgr = _extract_frame_bgr(video_path, seg_list[i].start)
         if frame_bgr is None:
             continue
-        x, y = _find_aoi_corner(frame_bgr)
+        x, y = find_aoi_corner(frame_bgr)
         if x is not None:
             x_vals.append(x)
         if y is not None:
@@ -160,95 +81,17 @@ def calibrate_crop_corner(seg_list, video_path: Path, n: int = 10) -> tuple[int,
     return x_crop, y_crop
 
 
-# ---------------------------------------------------------------------------
-# Slide loading and frame extraction (final, for matching)
-# ---------------------------------------------------------------------------
-
-def load_pdf_slides(pdf_path: Path) -> list[np.ndarray]:
-    """Load all PDF pages as normalized grayscale arrays (no crop)."""
-    slides = []
+def _load_slide_images(pdf_path: Path) -> tuple[list[np.ndarray], list[str]]:
+    """Render each PDF page to BGR and extract embedded text via fitz."""
+    images, texts = [], []
     pdf = fitz.open(str(pdf_path))
     for page in pdf:
         pix = page.get_pixmap(dpi=72)
         rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width, 3)
-        gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
-        slides.append(_normalize_frame(gray))
+        images.append(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR))
+        texts.append(page.get_text("text"))
     pdf.close()
-    return slides
-
-
-def extract_frame(
-    video_path: Path,
-    timestamp: float,
-    crop: tuple[int, int] | None = None,
-) -> np.ndarray | None:
-    """Extract a frame, optionally crop to the slide AOI, then normalize."""
-    frame_bgr = _extract_frame_bgr(video_path, timestamp)
-    if frame_bgr is None:
-        return None
-    if crop is not None:
-        x_crop, y_crop = crop
-        h, w = frame_bgr.shape[:2]
-        frame_bgr = frame_bgr[y_crop:h, x_crop:w]
-    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-    return _normalize_frame(gray)
-
-
-def best_slide(frame: np.ndarray, slides: list[np.ndarray]) -> int:
-    diffs = [np.sum(np.abs(frame - s)) for s in slides]
-    return int(np.argmin(diffs)) + 1  # 1-based
-
-
-def map_segments_to_slides(
-    seg_list,
-    video_path: Path,
-    slides: list[np.ndarray],
-    crop: tuple[int, int] | None = None,
-) -> list[int]:
-    assignments = []
-    for seg in seg_list:
-        frame = extract_frame(video_path, seg.start, crop)
-        if frame is not None:
-            assignments.append(best_slide(frame, slides))
-        else:
-            assignments.append(assignments[-1] if assignments else 1)
-    return assignments
-
-
-# ---------------------------------------------------------------------------
-# Slide transcript: consecutive-window merging
-# ---------------------------------------------------------------------------
-
-def build_slide_transcript(
-    seg_list,
-    assignments: list[int],
-) -> list[tuple[int, float, float, list[str]]]:
-    """
-    Group segments into consecutive windows: a new window opens whenever the
-    assigned slide changes, even if that slide was seen before.
-
-    Returns a list of (slide_num, window_start, window_end, [texts])
-    ordered by window_start.
-    """
-    pairs = sorted(zip(seg_list, assignments), key=lambda p: p[0].start)
-    windows: list[tuple[int, float, float, list[str]]] = []
-    for seg, slide_num in pairs:
-        if windows and windows[-1][0] == slide_num:
-            num, start, end, texts = windows[-1]
-            windows[-1] = (num, start, max(end, seg.end), texts + [seg.text.strip()])
-        else:
-            windows.append((slide_num, seg.start, seg.end, [seg.text.strip()]))
-    return windows
-
-
-def save_slide_transcript(
-    windows: list[tuple[int, float, float, list[str]]],
-    output_path: Path,
-) -> None:
-    with open(output_path, "w", encoding="utf-8") as f:
-        for slide_num, start, end, texts in windows:
-            f.write(f"slide #{slide_num} [{format_timestamp(start)} --> {format_timestamp(end)}]\n")
-            f.write(" ".join(texts) + "\n\n")
+    return images, texts
 
 
 # ---------------------------------------------------------------------------
@@ -290,32 +133,50 @@ def transcribe(video_path: Path, model_name: str) -> None:
     with open(output_srt, "w", encoding="utf-8") as f:
         for i, seg in enumerate(seg_list, start=1):
             start_srt = format_timestamp(seg.start).replace(".", ",")
-            end_srt = format_timestamp(seg.end).replace(".", ",")
+            end_srt   = format_timestamp(seg.end).replace(".", ",")
             f.write(f"{i}\n{start_srt} --> {end_srt}\n{seg.text.strip()}\n\n")
 
     print(f"\nTranscript saved to:  {output_txt}")
     print(f"SRT subtitles saved to: {output_srt}")
 
     pdf_path = video_path.with_suffix(".pdf")
-    if pdf_path.exists():
-        print(f"\nLoading slides from {pdf_path.name} ...")
-        slides = load_pdf_slides(pdf_path)
-        print(f"  -> {len(slides)} slides loaded")
-
-        print("Calibrating slide area of interest from 10 frames ...")
-        crop = calibrate_crop_corner(seg_list, video_path)
-
-        print("Mapping segments to slides ...")
-        assignments = map_segments_to_slides(seg_list, video_path, slides, crop)
-        for seg, slide_num in zip(seg_list, assignments):
-            print(f"  [{format_timestamp(seg.start)}]  -> slide {slide_num}")
-
-        windows = build_slide_transcript(seg_list, assignments)
-        output_slides = video_path.with_stem(video_path.stem + "_slides").with_suffix(".txt")
-        save_slide_transcript(windows, output_slides)
-        print(f"Slide transcript saved to: {output_slides}")
-    else:
+    if not pdf_path.exists():
         print(f"\nNo PDF found at {pdf_path} — skipping slide mapping.")
+        audio_path.unlink()
+        return
+
+    # ── Slides ───────────────────────────────────────────────────────────────
+    print(f"\nLoading slides from {pdf_path.name} ...")
+    slide_images, slide_texts = _load_slide_images(pdf_path)
+    slide_handler = SlideHandler(slide_images, slide_texts=slide_texts)
+    slides = slide_handler.slides
+    print(f"  {len(slides)} slides loaded")
+
+    # ── Frame grouping ───────────────────────────────────────────────────────
+    print("Calibrating slide area of interest ...")
+    crop_x, crop_y = calibrate_crop_corner(seg_list, video_path)
+
+    print(f"Extracting and grouping {len(seg_list)} frames ...")
+    reader = FrameReader(
+        crop_coords=((crop_x, crop_y), (None, None)),
+        target_size=(128, 128),
+    )
+    for seg in seg_list:
+        bgr = _extract_frame_bgr(video_path, seg.start)
+        reader.add_new_element(seg, bgr, seg.text)
+    reader.close_stream()
+    groups = reader.group_list
+    print(f"  {len(seg_list)} segments -> {len(groups)} groups")
+
+    # ── HMM assignment ───────────────────────────────────────────────────────
+    print("Assigning slides via HMM forward-backward ...")
+    hmm = AssignmentModel(slides)
+    assignment = hmm.assign_slides(groups)
+
+    # ── Export ───────────────────────────────────────────────────────────────
+    output_slides = video_path.with_stem(video_path.stem + "_slides").with_suffix(".txt")
+    export_script(assignment, slides, groups, output_slides)
+    print(f"Slide transcript saved to: {output_slides}")
 
     audio_path.unlink()
 
