@@ -6,3 +6,9 @@ matplotlib>=3.8.0
 ipykernel>=6.29.0
 opencv-python>=4.8.0
 pytesseract>=0.3.10
+scipy>=1.11.0
+
+# GPU inference support for faster-whisper (Windows only; provides cuBLAS/cuDNN DLLs
+# without a system-wide CUDA Toolkit install). Safe to leave installed for CPU-only use.
+nvidia-cublas-cu12==12.6.4.1; sys_platform == "win32"
+nvidia-cudnn-cu12==9.*; sys_platform == "win32"

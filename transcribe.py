@@ -2,9 +2,9 @@
 Lecture video transcription using ffmpeg + faster-whisper.
 
 Usage:
-    python transcribe.py <video.mp4> [--model tiny|base|small|medium|large-v3]
+    python transcribe.py <video.mp4> [--model tiny|base|small|medium|large-v3] [--device auto|cpu|cuda]
     python transcribe.py data/lecture.mp4
-    python transcribe.py data/lecture.mp4 --model large-v3
+    python transcribe.py data/lecture.mp4 --model large-v3 --device cuda
 """
 
 from __future__ import annotations
@@ -13,6 +13,18 @@ import argparse
 import subprocess
 import sys
 from pathlib import Path
+
+if sys.platform == "win32":
+    # The pip-installed nvidia-cublas-cu12 / nvidia-cudnn-cu12 wheels ship their DLLs
+    # inside site-packages instead of a system CUDA install; make them loadable.
+    # ctranslate2 resolves them via the legacy LoadLibrary search (PATH), so
+    # add_dll_directory alone isn't sufficient -- PATH must be extended too.
+    import os
+    for _pkg in ("cublas", "cudnn"):
+        _dll_dir = Path(sys.prefix) / "Lib" / "site-packages" / "nvidia" / _pkg / "bin"
+        if _dll_dir.is_dir():
+            os.add_dll_directory(str(_dll_dir))
+            os.environ["PATH"] = str(_dll_dir) + os.pathsep + os.environ["PATH"]
 
 import cv2
 import fitz
@@ -98,7 +110,24 @@ def _load_slide_images(pdf_path: Path) -> tuple[list[np.ndarray], list[str]]:
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-def transcribe(video_path: Path, model_name: str) -> None:
+def _load_whisper_model(model_name: str, device: str) -> WhisperModel:
+    """Load the model on the requested device, falling back to CPU if CUDA is unavailable.
+
+    compute_type="int8" is used on GPU rather than float16 because Pascal-generation
+    cards (e.g. GTX 10-series) lack efficient fp16 throughput.
+    """
+    if device == "auto":
+        try:
+            return WhisperModel(model_name, device="cuda", compute_type="int8")
+        except Exception as exc:
+            print(f"  GPU load failed ({exc}); falling back to CPU.")
+            return WhisperModel(model_name, device="cpu", compute_type="int8")
+    if device == "cuda":
+        return WhisperModel(model_name, device="cuda", compute_type="int8")
+    return WhisperModel(model_name, device="cpu", compute_type="int8")
+
+
+def transcribe(video_path: Path, model_name: str, device: str) -> None:
     audio_path = video_path.with_suffix(".wav")
     output_txt = video_path.with_suffix(".txt")
     output_srt = video_path.with_suffix(".srt")
@@ -108,7 +137,7 @@ def transcribe(video_path: Path, model_name: str) -> None:
     print(f"  -> {audio_path.name}")
 
     print(f"Loading Whisper model '{model_name}' (first run downloads weights) ...")
-    model = WhisperModel(model_name, device="cpu", compute_type="int8")
+    model = _load_whisper_model(model_name, device)
 
     print("Transcribing ...")
     segments, info = model.transcribe(
@@ -190,13 +219,19 @@ def main() -> None:
         choices=["tiny", "base", "small", "medium", "large-v2", "large-v3"],
         help="Whisper model size (default: small). Larger = more accurate but slower.",
     )
+    parser.add_argument(
+        "--device",
+        default="auto",
+        choices=["auto", "cpu", "cuda"],
+        help="Inference device (default: auto — tries GPU, falls back to CPU).",
+    )
     args = parser.parse_args()
 
     if not args.video.exists():
         print(f"Error: file not found: {args.video}", file=sys.stderr)
         sys.exit(1)
 
-    transcribe(args.video, args.model)
+    transcribe(args.video, args.model, args.device)
 
 
 if __name__ == "__main__":

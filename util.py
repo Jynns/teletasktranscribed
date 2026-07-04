@@ -94,11 +94,12 @@ def find_aoi_corner(bgr, ksize=3, threshold=80, angle_tol=6):
     lines = cv2.HoughLinesP(closed, 1, np.pi/180, 40, minLineLength=40, maxLineGap=50)
     h_lines, v_lines = [], []
     if lines is not None:
-        for l in lines:
-            x1, y1, x2, y2 = l[0]
+        if lines.ndim == 3:  # cv2 < 5.0 returns (N, 1, 4); cv2 >= 5.0 returns (N, 4)
+            lines = lines.reshape(-1, 4)
+        for x1, y1, x2, y2 in lines:
             length = np.hypot(x2-x1, y2-y1)
-            if abs(y2-y1) <= angle_tol:   h_lines.append((length, l[0]))
-            elif abs(x2-x1) <= angle_tol: v_lines.append((length, l[0]))
+            if abs(y2-y1) <= angle_tol:   h_lines.append((length, (x1, y1, x2, y2)))
+            elif abs(x2-x1) <= angle_tol: v_lines.append((length, (x1, y1, x2, y2)))
     h_lines.sort(key=lambda t: -t[0])
     v_lines.sort(key=lambda t: -t[0])
     cx = int((v_lines[0][1][0]+v_lines[0][1][2])/2) if v_lines else None
