@@ -5,3 +5,4 @@
 __pycache__/util.cpython-312.pyc
 __pycache__/frame_reader.cpython-312.pyc
 __pycache__/assignment_model.cpython-312.pyc
+data/*
