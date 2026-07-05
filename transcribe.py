@@ -190,9 +190,12 @@ def transcribe(video_path: Path, model_name: str, device: str) -> None:
         crop_coords=((crop_x, crop_y), (None, None)),
         target_size=(128, 128),
     )
-    for seg in seg_list:
+    total = len(seg_list)
+    for i, seg in enumerate(seg_list, start=1):
         bgr = _extract_frame_bgr(video_path, seg.start)
         reader.add_new_element(seg, bgr, seg.text)
+        print(f"\r  {i}/{total} ({100*i//total}%)", end="", flush=True)
+    print()
     reader.close_stream()
     groups = reader.group_list
     print(f"  {len(seg_list)} segments -> {len(groups)} groups")
@@ -203,7 +206,9 @@ def transcribe(video_path: Path, model_name: str, device: str) -> None:
     assignment = hmm.assign_slides(groups)
 
     # ── Export ───────────────────────────────────────────────────────────────
-    output_slides = video_path.with_stem(video_path.stem + "_slides").with_suffix(".txt")
+    result_dir = Path.cwd() / "result"
+    result_dir.mkdir(exist_ok=True)
+    output_slides = result_dir / video_path.with_suffix(".txt").name
     export_script(assignment, slides, groups, output_slides)
     print(f"Slide transcript saved to: {output_slides}")
 
